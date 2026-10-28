@@ -34,7 +34,43 @@ final class Signer {
     $point = CurveFactory::getGeneratorByName(SecgCurve::NAME_SECP_256K1)
       ->getPrivateKeyFrom(gmp_init($this->key, 16))
       ->getPublicKey()->getPoint();
-    $pub = str_pad(gmp_export($point->getX()), 32, "\0", STR_PAD_LEFT) . str_pad(gmp_export($point->getY()), 32, "\0", STR_PAD_LEFT);
+    return self::addressOf($point->getX(), $point->getY());
+  }
+
+  /**
+   * The address that signed a 0x-hex digest (ecrecover), or NULL when the
+   * signature is malformed or recovers nothing.
+   */
+  public static function recover(string $digest, string $signature): ?string {
+    if (!preg_match('/^0x([0-9a-fA-F]{64})([0-9a-fA-F]{64})([0-9a-fA-F]{2})$/', $signature, $m)) {
+      return NULL;
+    }
+    $generator = CurveFactory::getGeneratorByName(SecgCurve::NAME_SECP_256K1);
+    $curve = $generator->getCurve();
+    $n = $generator->getOrder();
+    $p = $curve->getPrime();
+    [$r, $s, $v] = [gmp_init($m[1], 16), gmp_init($m[2], 16), hexdec($m[3]) - 27];
+    if (!in_array($v, [0, 1], TRUE) || gmp_sign($r) <= 0 || gmp_cmp($r, $n) >= 0 || gmp_sign($s) <= 0 || gmp_cmp($s, $n) >= 0) {
+      return NULL;
+    }
+    // R = (r, y) on y² = x³ + 7, with y's parity from v. p ≡ 3 mod 4.
+    $y = gmp_powm(gmp_mod(gmp_add(gmp_powm($r, 3, $p), 7), $p), gmp_div_q(gmp_add($p, 1), 4), $p);
+    if (gmp_cmp(gmp_powm($y, 2, $p), gmp_mod(gmp_add(gmp_powm($r, 3, $p), 7), $p)) !== 0) {
+      return NULL;
+    }
+    if (gmp_intval(gmp_mod($y, 2)) !== $v) {
+      $y = gmp_sub($p, $y);
+    }
+    // Q = r⁻¹·(s·R − e·G).
+    $rInv = gmp_invert($r, $n);
+    $e = gmp_init(substr($digest, 2), 16);
+    $q = $curve->getPoint($r, $y, $n)->mul(gmp_mod(gmp_mul($s, $rInv), $n))
+      ->add($generator->mul(gmp_mod(gmp_neg(gmp_mul($e, $rInv)), $n)));
+    return $q->isInfinity() ? NULL : self::addressOf($q->getX(), $q->getY());
+  }
+
+  private static function addressOf(\GMP $x, \GMP $y): string {
+    $pub = str_pad(gmp_export($x), 32, "\0", STR_PAD_LEFT) . str_pad(gmp_export($y), 32, "\0", STR_PAD_LEFT);
     return self::checksum(substr(Eip712::keccak($pub), -40));
   }
 

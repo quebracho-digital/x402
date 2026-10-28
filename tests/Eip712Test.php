@@ -29,6 +29,9 @@ final class Eip712Test extends TestCase
             '0x4355c47d63924e8a72e509b65029052eb6c299d53a04e167c5775fd466751c9d07299936d304c153f6443dfa05f40ff007d72911b6f72307f996231605b915621c',
             (new Signer(Eip712::keccak('cow')))->sign($digest),
         );
+        self::assertSame((new Signer(Eip712::keccak('cow')))->address(), Signer::recover($digest, '0x4355c47d63924e8a72e509b65029052eb6c299d53a04e167c5775fd466751c9d07299936d304c153f6443dfa05f40ff007d72911b6f72307f996231605b915621c'));
+        self::assertSame('0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826', (new Signer(Eip712::keccak('cow')))->address());
+        self::assertNull(Signer::recover($digest, '0x' . str_repeat('00', 65)));
         self::assertSame('0xbe609aee343fb3c4b28e1df9e632fca64fcfaede20f02e86244efddf30957bd2', $digest);
     }
 }
