@@ -115,11 +115,7 @@ experimental, see [docs/near.md](docs/near.md).
 ## Hardening
 
 What it resists, each backed by a test, is listed in the
-[repository README](../../README.md#attacks-it-resists). One worth checking in any
-x402 implementation: the EIP-712 encoder reads `0xAB…`, `0xab…` and `ab…` as the
-same nonce, so a replay check keyed on the string as sent lets one signature buy
-several deliveries. Here verification accepts one spelling and the claim key
-ignores hex case.
+[repository README](../../README.md#attacks-it-resists).
 
 ## Tests
 
