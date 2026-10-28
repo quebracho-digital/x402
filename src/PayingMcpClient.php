@@ -56,6 +56,8 @@ final class PayingMcpClient implements ClientInterface {
       return $response;
     }
 
+    // Expired signatures the seller never used no longer count.
+    $this->budget->reclaim();
     // The first offer we have a scheme for and the budget allows.
     foreach ($required['accepts'] ?? [] as $req) {
       foreach ($this->schemes as $scheme) {
@@ -66,12 +68,16 @@ final class PayingMcpClient implements ClientInterface {
         // Spent when signed: a signed authorization is money the seller can
         // settle on its own, whatever it answers. Never refunded here.
         $this->budget->spend($req);
-        $call['params']['_meta'][X402McpMiddleware::PAYMENT] = $scheme->pay($required, $req);
+        $payment = $scheme->pay($required, $req);
+        $call['params']['_meta'][X402McpMiddleware::PAYMENT] = $payment;
         $paid = $request->withBody($this->streams->createStream(json_encode($call, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)));
         [$response, $result] = $this->answer($this->client->sendRequest($paid), $call['id']);
         $receipt = $result['_meta'][X402McpMiddleware::PAYMENT_RESPONSE] ?? NULL;
         if (is_array($receipt)) {
           $this->onPaid?->__invoke((string) $call['params']['name'], $req, $receipt);
+        }
+        if (($receipt['success'] ?? NULL) !== TRUE) {
+          $this->budget->unsettled($req, $payment);
         }
         return $response;
       }

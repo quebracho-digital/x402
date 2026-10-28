@@ -14,6 +14,10 @@ use Psr\EventDispatcher\StoppableEventInterface;
  * before anything is claimed or run. The buyer asks it about `payTo` before
  * signing. Any listener (a sanctions list, an allowlist, an API) may reject;
  * the first rejection stops the others. Without a dispatcher nothing is asked.
+ *
+ * A slow listener (an API) defers instead: it starts its lookup and hands
+ * over a closure with the answer. The seller reads it just before settling,
+ * so the lookup runs while the tool does; the buyer reads it before signing.
  */
 final class AddressCheck implements StoppableEventInterface {
 
@@ -21,6 +25,11 @@ final class AddressCheck implements StoppableEventInterface {
   public const string PAY_TO = 'payTo';
 
   private ?string $reason = NULL;
+
+  /**
+   * @var \Closure[]
+   */
+  private array $later = [];
 
   /**
    * @param string $role
@@ -41,7 +50,38 @@ final class AddressCheck implements StoppableEventInterface {
     $this->reason = $reason;
   }
 
+  /**
+   * @param \Closure $later
+   *   fn(): ?string — the reason to reject, or NULL; it may block until the
+   *   lookup answers. Throwing is a rejection.
+   */
+  public function defer(\Closure $later): void {
+    $this->later[] = $later;
+  }
+
+  /**
+   * The rejection known now, without waiting for deferred lookups.
+   */
   public function reason(): ?string {
+    return $this->reason;
+  }
+
+  /**
+   * The final rejection, or NULL: waits for every deferred lookup.
+   */
+  public function verdict(): ?string {
+    foreach ($this->later as $later) {
+      if ($this->reason !== NULL) {
+        break;
+      }
+      try {
+        $this->reason = $later();
+      }
+      catch (\Throwable) {
+        $this->reason = 'address_check_failed';
+      }
+    }
+    $this->later = [];
     return $this->reason;
   }
 
@@ -50,24 +90,35 @@ final class AddressCheck implements StoppableEventInterface {
   }
 
   /**
-   * Why this address may not take part, or NULL when it may.
+   * Dispatches the check, or NULL without a dispatcher.
    *
    * Fails closed: an address it cannot read, or a listener that throws,
    * is a rejection, not a pass.
    */
-  public static function run(?EventDispatcherInterface $events, string $role, ?string $address, array $req): ?string {
+  public static function start(?EventDispatcherInterface $events, string $role, ?string $address, array $req): ?self {
     if ($events === NULL) {
       return NULL;
     }
+    $check = new self($role, (string) $req['network'], (string) $address, $req);
     if ($address === NULL || $address === '') {
-      return 'invalid_payload';
+      $check->reject('invalid_payload');
+      return $check;
     }
     try {
-      return $events->dispatch(new self($role, (string) $req['network'], $address, $req))->reason();
+      $events->dispatch($check);
     }
     catch (\Throwable) {
-      return 'address_check_failed';
+      $check->reject('address_check_failed');
     }
+    return $check;
+  }
+
+  /**
+   * Why this address may not take part, or NULL when it may; waits for
+   * deferred lookups.
+   */
+  public static function run(?EventDispatcherInterface $events, string $role, ?string $address, array $req): ?string {
+    return self::start($events, $role, $address, $req)?->verdict();
   }
 
 }

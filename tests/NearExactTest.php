@@ -245,4 +245,21 @@ final class NearExactTest extends TestCase
         $scheme = new NearExact(clock: fn() => self::CURRENT_BLOCK_HEIGHT);
         self::assertSame('timeout_window_exceeds_maxTimeout', $scheme->verify(self::payment(), $req));
     }
+
+    public function testThePayerIsUnprovenWithoutAKeyOwnerCheck(): void
+    {
+        self::assertNull((new NearExact())->payer(self::payment()));
+    }
+
+    public function testThePayerIsTheSenderOnlyWhenTheKeyIsTheirs(): void
+    {
+        $public = self::keypair()['public'];
+        $owns = new NearExact(keyOwner: fn(string $account, string $key) => $account === self::SENDER_ID && $key === $public);
+        $foreign = new NearExact(keyOwner: fn() => false);
+        $down = new NearExact(keyOwner: fn() => throw new \RuntimeException('RPC down'));
+
+        self::assertSame(self::SENDER_ID, $owns->payer(self::payment()));
+        self::assertNull($foreign->payer(self::payment()));
+        self::assertNull($down->payer(self::payment()));
+    }
 }

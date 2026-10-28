@@ -45,4 +45,47 @@ final class BudgetTest extends TestCase
     {
         self::assertFalse(Budget::usd('eip155:84532', '0.05')->allows(array_replace(self::offer(), $patch)));
     }
+
+    /** A budget that spent one signed, unsettled payment valid until t=1000. */
+    private static function withUnsettled(?\Closure $used, int &$now): Budget
+    {
+        $budget = new Budget(['eip155:84532' => '50000'], $used, function () use (&$now) { return $now; });
+        $budget->spend(self::offer());
+        $budget->unsettled(self::offer(), ['payload' => ['authorization' => ['from' => '0xabc', 'nonce' => '0x01', 'validBefore' => '1000']]]);
+        return $budget;
+    }
+
+    public function testFreesAnExpiredSignatureTheChainNeverUsed(): void
+    {
+        $now = 1000;
+        $budget = self::withUnsettled(fn(string $network, string $from, string $nonce) => false, $now);
+        $budget->reclaim();
+        self::assertSame('10000', $budget->spent('eip155:84532'), 'still valid: the seller may settle it yet');
+
+        $now = 1060;
+        $budget->reclaim();
+        self::assertSame('10000', $budget->spent('eip155:84532'), 'within the clock-skew margin');
+
+        $now = 1061;
+        $budget->reclaim();
+        self::assertSame('0', $budget->spent('eip155:84532'));
+        $budget->reclaim();
+        self::assertSame('0', $budget->spent('eip155:84532'), 'freed once');
+    }
+
+    public function testKeepsWhatTheChainUsedOrCannotTell(): void
+    {
+        $now = 2000;
+        $used = self::withUnsettled(fn() => true, $now);
+        $used->reclaim();
+        self::assertSame('10000', $used->spent('eip155:84532'));
+
+        $down = self::withUnsettled(fn() => throw new \RuntimeException('RPC down'), $now);
+        $down->reclaim();
+        self::assertSame('10000', $down->spent('eip155:84532'));
+
+        $none = self::withUnsettled(null, $now);
+        $none->reclaim();
+        self::assertSame('10000', $none->spent('eip155:84532'));
+    }
 }

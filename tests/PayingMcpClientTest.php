@@ -191,4 +191,24 @@ final class PayingMcpClientTest extends TestCase
         self::assertSame('address_check_failed', $result['structuredContent']['error']);
         self::assertSame(0, $this->served);
     }
+
+    public function testADeferredRejectionWithholdsTheOutputItRanFor(): void
+    {
+        $lookups = 0;
+        $deferring = new class ($lookups) implements EventDispatcherInterface {
+            public function __construct(private int &$lookups) {}
+            public function dispatch(object $event): object
+            {
+                // Started now, answered when the seller asks before settling.
+                $event->defer(function () { $this->lookups++; return 'address_sanctioned'; });
+                return $event;
+            }
+        };
+        $result = self::toolResult($this->buyer(Budget::usd('eip155:84532', '0.05'), sellerEvents: $deferring)->sendRequest(self::call()));
+
+        self::assertSame('address_sanctioned', $result['structuredContent']['error']);
+        self::assertSame(1, $this->served);
+        self::assertSame(1, $lookups);
+        self::assertSame([], $this->paid);
+    }
 }

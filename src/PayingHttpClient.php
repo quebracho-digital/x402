@@ -50,6 +50,8 @@ final class PayingHttpClient implements ClientInterface {
       return $response;
     }
 
+    // Expired signatures the seller never used no longer count.
+    $this->budget->reclaim();
     // The first offer we have a scheme for and the budget allows.
     foreach ($required['accepts'] ?? [] as $req) {
       foreach ($this->schemes as $scheme) {
@@ -67,11 +69,17 @@ final class PayingHttpClient implements ClientInterface {
         }
         $paid = $this->client->sendRequest($request->withHeader(PaymentHeaders::SIGNATURE, PaymentHeaders::encode($payment)));
         $receipt = $paid->getHeaderLine(PaymentHeaders::RESPONSE);
-        if ($receipt !== '') {
-          $receipt = PaymentHeaders::decode($receipt);
-          if (($receipt['success'] ?? NULL) === TRUE) {
-            $this->onPaid?->__invoke($req, $receipt);
-          }
+        try {
+          $receipt = $receipt === '' ? NULL : PaymentHeaders::decode($receipt);
+        }
+        catch (InvalidPaymentException) {
+          $receipt = NULL;
+        }
+        if (($receipt['success'] ?? NULL) === TRUE) {
+          $this->onPaid?->__invoke($req, $receipt);
+        }
+        else {
+          $this->budget->unsettled($req, $payment);
         }
         return $paid;
       }

@@ -27,12 +27,17 @@ final class NearExact implements Scheme {
    *   Access key nonce for the delegate action (must be > current key nonce).
    * @param ?\Closure $clock
    *   Returns the current final block height (an RPC `block` call).
+   * @param ?\Closure $keyOwner
+   *   fn(string $accountId, string $publicKey): bool — whether that raw
+   *   32-byte ed25519 key is a full-access key of the account (an RPC
+   *   `view_access_key` call). Without it payer() is NULL: unproven.
    */
   public function __construct(
     private readonly ?string $secretKey = NULL,
     private readonly ?string $senderId = NULL,
     private readonly ?int $nonce = NULL,
     private readonly ?\Closure $clock = NULL,
+    private readonly ?\Closure $keyOwner = NULL,
   ) {}
 
   public function supports(string $network): bool {
@@ -199,16 +204,25 @@ final class NearExact implements Scheme {
   }
 
   /**
-   * The delegate action's sender_id.
+   * The delegate action's sender_id, once $keyOwner proves the signing key
+   * is theirs; NULL otherwise.
    *
-   * ponytail: verify() checks the signature, not that the key belongs to
-   * sender_id (an RPC check, the facilitator's); a forged sender_id passes
-   * screening here and fails at settlement.
+   * Offline, anyone can write a clean sender_id over their own key, so an
+   * unproven payer is no payer: with screening on, it is rejected.
    */
   public function payer(array $payment): ?string {
     $raw = $payment['payload']['signedDelegateAction'] ?? NULL;
     $bytes = is_string($raw) ? base64_decode($raw, TRUE) : FALSE;
-    return $bytes ? self::decodeSignedDelegateAction($bytes)['sender_id'] ?? NULL : NULL;
+    $decoded = $bytes ? self::decodeSignedDelegateAction($bytes) : NULL;
+    if ($decoded === NULL || $this->keyOwner === NULL) {
+      return NULL;
+    }
+    try {
+      return ($this->keyOwner)($decoded['sender_id'], $decoded['public_key_bytes']) === TRUE ? $decoded['sender_id'] : NULL;
+    }
+    catch (\Throwable) {
+      return NULL;
+    }
   }
 
   private static function timeoutBlocks(array $req): int {

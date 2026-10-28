@@ -96,9 +96,11 @@ final class X402McpMiddleware implements MiddlewareInterface {
       ?: throw new \LogicException("No scheme verifies {$req['network']}.");
     // ponytail: verify runs before the MCP session check and costs an
     // ecrecover; rate-limit the route where it is deployed.
-    // Screened once the signature proved who pays, before anything is spent.
-    $reason = $scheme->verify($payment, $req)
-      ?? AddressCheck::run($this->events, AddressCheck::PAYER, $scheme->payer($payment), $req);
+    $reason = $scheme->verify($payment, $req);
+    // Screened once the signature proved who pays, before anything is spent;
+    // a slow lookup started here is read before settling.
+    $check = $reason === NULL ? AddressCheck::start($this->events, AddressCheck::PAYER, $scheme->payer($payment), $req) : NULL;
+    $reason ??= $check?->reason();
     if ($reason !== NULL) {
       return $this->required($id, $accepts, $resource, $reason);
     }
@@ -113,13 +115,17 @@ final class X402McpMiddleware implements MiddlewareInterface {
       return $response;
     }
     $delivered = NULL;
-    $settled = $this->rewrite($response, $id, function (array $out) use ($payment, $req, &$delivered): array {
+    $settled = $this->rewrite($response, $id, function (array $out) use ($payment, $req, $check, &$delivered): array {
       // A JSON-RPC error or a failed tool delivered nothing: nothing charged.
       $delivered = isset($out['result']) && empty($out['result']['isError']);
       if (!$delivered) {
         return $out;
       }
-      $receipt = Settlement::run($this->settle, $payment, $req);
+      $late = $check?->verdict();
+      $receipt = $late === NULL
+        ? Settlement::run($this->settle, $payment, $req)
+        // Ran but not paid for: withheld, as when settlement fails.
+        : ['success' => FALSE, 'errorReason' => $late];
       if ($receipt['success'] !== TRUE) {
         return ['receipt' => $receipt];
       }

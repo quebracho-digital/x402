@@ -73,9 +73,11 @@ final class X402Middleware implements MiddlewareInterface {
     }
     $scheme = current(array_filter($this->schemes, fn(Scheme $s) => $s->supports($req['network'])))
       ?: throw new \LogicException("No scheme verifies {$req['network']}.");
-    // Screened once the signature proved who pays, before anything is spent.
-    $reason = $scheme->verify($payment, $req)
-      ?? AddressCheck::run($this->events, AddressCheck::PAYER, $scheme->payer($payment), $req);
+    $reason = $scheme->verify($payment, $req);
+    // Screened once the signature proved who pays, before anything is spent;
+    // a slow lookup started here is read before settling.
+    $check = $reason === NULL ? AddressCheck::start($this->events, AddressCheck::PAYER, $scheme->payer($payment), $req) : NULL;
+    $reason ??= $check?->reason();
     if ($reason !== NULL) {
       return $this->required($accepts, $resource, $reason);
     }
@@ -88,6 +90,11 @@ final class X402Middleware implements MiddlewareInterface {
     if ($response->getStatusCode() < 200 || $response->getStatusCode() >= 300) {
       // Nothing delivered, nothing charged.
       return $response;
+    }
+    $reason = $check?->verdict();
+    if ($reason !== NULL) {
+      // Ran but not paid for: withheld, as when settlement fails.
+      return $this->required($accepts, $resource, $reason);
     }
     $receipt = Settlement::run($this->settle, $payment, $req);
     if ($receipt['success'] !== TRUE) {

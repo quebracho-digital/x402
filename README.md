@@ -66,6 +66,9 @@ reads the receipt from `result._meta["x402/payment-response"]`.
 in memory, spent when it signs (a signed authorization is money the seller
 can settle) and never refunded on the seller's word. Both buyers sign only
 known tokens (`Networks`), integer amounts and validities up to 10 minutes.
+With `Budget::usd($network, $usd, $used)`, where `$used` reads the token's
+`authorizationState` on chain, a signature the seller never settled frees
+its amount once it expires unused.
 
 ## Networks
 
@@ -85,6 +88,10 @@ middleware or a paying client, and it dispatches an `AddressCheck`:
   payment is claimed or the handler runs;
 - **buyer**: on each offer's `payTo`, before signing it (and before the budget
   is spent).
+
+A slow listener (an API) calls `$check->defer(fn () => ?string)` instead:
+the seller reads it just before settling, so the lookup overlaps the
+handler, and withholds the output on a late rejection.
 
 A listener calls `$check->reject('reason')` to block; the seller answers a
 PaymentRequired with that reason, the buyer skips the offer. A listener that

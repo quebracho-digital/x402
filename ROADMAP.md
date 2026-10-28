@@ -3,14 +3,9 @@
 Lives in the hackathon repo for now. It moves to its own repo after the
 hackathon (`git subtree split`, history kept), then goes on Packagist.
 
-## Accepted, to do
+## Done
 
-- [ ] **Budget release.** Free up budget spent on signatures that were never settled. Do it only once the authorization's `validBefore` has passed, or once `authorizationState(from, nonce)` on chain confirms the nonce is unused (an RPC closure). Never on the seller's word.
-- [ ] **Screening timing.** Let a listener start a slow lookup (an API) when the payment is decoded, and read its answer before settle.
-  - If it has not answered by then, wait up to a timeout, then apply a policy: reject (the default) or let it through.
-  - A sanctioned payer gets nothing: the output is withheld, as on a failed settle.
-  - Screening stays opt-in. The cache (one lookup per payer per day) is what removes most of the latency.
-- [ ] **NEAR, strict screening.** With a dispatcher set, screen a NEAR payer only when a key ↔ `sender_id` RPC check is configured; otherwise reject.
+- Budget release by the chain, deferred screening, and strict NEAR screening (D8).
 
 ## Open
 
