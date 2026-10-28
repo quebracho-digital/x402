@@ -76,7 +76,7 @@ final class X402Middleware implements MiddlewareInterface {
     }
     $receipt = $this->settle
       ? ($this->settle)($payment, $req)
-      : ['success' => TRUE, 'transaction' => '', 'network' => $req['network'], 'payer' => $payment['payload']['authorization']['from'] ?? NULL];
+      : ['success' => TRUE, 'transaction' => '', 'network' => $req['network'], 'payer' => $payment['payload']['authorization']['from'] ?? $payment['payload']['sender_id'] ?? NULL];
     if (empty($receipt['success'])) {
       return $this->required($accepts, $resource, $receipt['errorReason'] ?? 'settlement_failed');
     }

@@ -45,7 +45,9 @@ final class PayingHttpClient implements ClientInterface {
         }
         $payment = $scheme->pay($required, $req);
         // The same request, paid: the body is read again from the start.
-        $request->getBody()->rewind();
+        if ($request->getBody()->isSeekable()) {
+          $request->getBody()->rewind();
+        }
         $paid = $this->client->sendRequest($request->withHeader(PaymentHeaders::SIGNATURE, PaymentHeaders::encode($payment)));
         $receipt = $paid->getHeaderLine(PaymentHeaders::RESPONSE);
         // Spent once the seller says it settled; a refused payment is not.

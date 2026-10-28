@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "8b7dfc0770173d18450aa699e5a372f8",
+    "content-hash": "19be8b4a00e8df1d06a79e5422da1915",
     "packages": [
         {
             "name": "genkgo/php-asn1",
@@ -2534,7 +2534,8 @@
     "prefer-lowest": false,
     "platform": {
         "php": "^8.3",
-        "ext-gmp": "*"
+        "ext-gmp": "*",
+        "ext-sodium": "*"
     },
     "platform-dev": {},
     "plugin-api-version": "2.9.0"
