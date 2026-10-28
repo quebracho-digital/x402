@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Quebracho\X402;
 
+use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
@@ -26,6 +27,9 @@ final class PayingMcpClient implements ClientInterface {
    * @param ?\Closure $onPaid
    *   fn(string $tool, array $req, array $receipt): void — every receipt of
    *   a paid retry, settled or not, e.g. to show or log it.
+   * @param ?EventDispatcherInterface $events
+   *   Dispatches an AddressCheck on each offer's payTo before signing it;
+   *   NULL screens nothing.
    */
   public function __construct(
     private readonly ClientInterface $client,
@@ -33,6 +37,7 @@ final class PayingMcpClient implements ClientInterface {
     private readonly Budget $budget,
     private readonly StreamFactoryInterface $streams,
     private readonly ?\Closure $onPaid = NULL,
+    private readonly ?EventDispatcherInterface $events = NULL,
   ) {}
 
   public function sendRequest(RequestInterface $request): ResponseInterface {
@@ -54,7 +59,8 @@ final class PayingMcpClient implements ClientInterface {
     // The first offer we have a scheme for and the budget allows.
     foreach ($required['accepts'] ?? [] as $req) {
       foreach ($this->schemes as $scheme) {
-        if (!is_array($req) || !$scheme->supports((string) ($req['network'] ?? '')) || !$this->budget->allows($req)) {
+        if (!is_array($req) || !$scheme->supports((string) ($req['network'] ?? '')) || !$this->budget->allows($req)
+          || AddressCheck::run($this->events, AddressCheck::PAY_TO, is_string($req['payTo'] ?? NULL) ? $req['payTo'] : NULL, $req) !== NULL) {
           continue;
         }
         // Spent when signed: a signed authorization is money the seller can

@@ -59,6 +59,11 @@ final class EvmExact implements Scheme {
     };
   }
 
+  public function payer(array $payment): ?string {
+    $from = $payment['payload']['authorization']['from'] ?? NULL;
+    return is_string($from) ? $from : NULL;
+  }
+
   private function now(): int {
     return $this->clock ? ($this->clock)() : time();
   }

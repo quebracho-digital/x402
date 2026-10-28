@@ -198,6 +198,19 @@ final class NearExact implements Scheme {
     return NULL;
   }
 
+  /**
+   * The delegate action's sender_id.
+   *
+   * ponytail: verify() checks the signature, not that the key belongs to
+   * sender_id (an RPC check, the facilitator's); a forged sender_id passes
+   * screening here and fails at settlement.
+   */
+  public function payer(array $payment): ?string {
+    $raw = $payment['payload']['signedDelegateAction'] ?? NULL;
+    $bytes = is_string($raw) ? base64_decode($raw, TRUE) : FALSE;
+    return $bytes ? self::decodeSignedDelegateAction($bytes)['sender_id'] ?? NULL : NULL;
+  }
+
   private static function timeoutBlocks(array $req): int {
     return max(1, (int) ($req['maxTimeoutSeconds'] ?? 0));
   }

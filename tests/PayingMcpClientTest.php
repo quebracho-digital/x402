@@ -8,11 +8,13 @@ use Nyholm\Psr7\Factory\Psr17Factory;
 use Nyholm\Psr7\Request;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
+use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Quebracho\X402\AddressCheck;
 use Quebracho\X402\Budget;
 use Quebracho\X402\EvmExact;
 use Quebracho\X402\FileClaims;
@@ -29,11 +31,11 @@ final class PayingMcpClientTest extends TestCase
     public int $served = 0;
     private array $paid = [];
 
-    private function seller(?\Closure $settle = null, bool $sse = false): ClientInterface
+    private function seller(?\Closure $settle = null, bool $sse = false, ?EventDispatcherInterface $events = null): ClientInterface
     {
         $f = new Psr17Factory();
         $req = Networks::requirements('eip155:84532', '0.01', '0x000000000000000000000000000000000000dEaD');
-        $middleware = new X402McpMiddleware([new EvmExact()], fn(array $p) => $p['name'] === 'wisdom' ? [$req] : null, (new FileClaims(sys_get_temp_dir() . '/x402-claims-' . bin2hex(random_bytes(8))))->__invoke(...), $f, $f, $settle);
+        $middleware = new X402McpMiddleware([new EvmExact()], fn(array $p) => $p['name'] === 'wisdom' ? [$req] : null, (new FileClaims(sys_get_temp_dir() . '/x402-claims-' . bin2hex(random_bytes(8))))->__invoke(...), $f, $f, $settle, $events);
         $handler = new class ($this, $f, $sse) implements RequestHandlerInterface {
             public function __construct(private PayingMcpClientTest $test, private Psr17Factory $f, private bool $sse) {}
             public function handle(ServerRequestInterface $request): ResponseInterface
@@ -54,12 +56,12 @@ final class PayingMcpClientTest extends TestCase
         };
     }
 
-    private function buyer(Budget $budget, ?\Closure $settle = null, bool $sse = false): PayingMcpClient
+    private function buyer(Budget $budget, ?\Closure $settle = null, bool $sse = false, ?EventDispatcherInterface $sellerEvents = null, ?EventDispatcherInterface $buyerEvents = null): PayingMcpClient
     {
         $key = new Signer('0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318');
-        return new PayingMcpClient($this->seller($settle, $sse), [new EvmExact($key)], $budget, new Psr17Factory(), function (string $tool, array $req, array $receipt) {
+        return new PayingMcpClient($this->seller($settle, $sse, $sellerEvents), [new EvmExact($key)], $budget, new Psr17Factory(), function (string $tool, array $req, array $receipt) {
             $this->paid[] = [$tool, $req['amount'], $receipt['success']];
-        });
+        }, $buyerEvents);
     }
 
     private static function call(string $tool = 'wisdom'): Request
@@ -136,6 +138,57 @@ final class PayingMcpClientTest extends TestCase
     {
         $result = self::toolResult($this->buyer(Budget::usd('eip155:11155111', '1'))->sendRequest(self::call()));
         self::assertTrue($result['isError']);
+        self::assertSame(0, $this->served);
+    }
+
+    /** A PSR-14 dispatcher that rejects one address, and records what it saw. */
+    private static function denying(string $address, ?array &$seen = []): EventDispatcherInterface
+    {
+        return new class ($address, $seen) implements EventDispatcherInterface {
+            public function __construct(private string $address, private ?array &$seen) {}
+            public function dispatch(object $event): object
+            {
+                $this->seen[] = [$event->role, $event->address];
+                if (strcasecmp($event->address, $this->address) === 0) {
+                    $event->reject('address_denied');
+                }
+                return $event;
+            }
+        };
+    }
+
+    public function testTheSellerRefusesADeniedPayerBeforeRunningOrClaiming(): void
+    {
+        $payer = (new Signer('0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318'))->address();
+        $budget = Budget::usd('eip155:84532', '0.05');
+        $result = self::toolResult($this->buyer($budget, sellerEvents: self::denying($payer, $seen))->sendRequest(self::call()));
+
+        self::assertSame('address_denied', $result['structuredContent']['error']);
+        self::assertSame([[AddressCheck::PAYER, $payer]], $seen);
+        self::assertSame(0, $this->served);
+        // Signed, so spent: the buyer cannot know the seller will not settle it.
+        self::assertSame('10000', $budget->spent('eip155:84532'));
+    }
+
+    public function testTheBuyerNeverSignsForADeniedPayTo(): void
+    {
+        $budget = Budget::usd('eip155:84532', '0.05');
+        $result = self::toolResult($this->buyer($budget, buyerEvents: self::denying('0x000000000000000000000000000000000000dEaD', $seen))->sendRequest(self::call()));
+
+        self::assertSame('Payment required to access this resource', $result['structuredContent']['error']);
+        self::assertSame([[AddressCheck::PAY_TO, '0x000000000000000000000000000000000000dEaD']], $seen);
+        self::assertSame('0', $budget->spent('eip155:84532'));
+        self::assertSame(0, $this->served);
+    }
+
+    public function testAListenerThatThrowsBlocksThePayment(): void
+    {
+        $throwing = new class implements EventDispatcherInterface {
+            public function dispatch(object $event): object { throw new \RuntimeException('screening API down'); }
+        };
+        $result = self::toolResult($this->buyer(Budget::usd('eip155:84532', '0.05'), sellerEvents: $throwing)->sendRequest(self::call()));
+
+        self::assertSame('address_check_failed', $result['structuredContent']['error']);
         self::assertSame(0, $this->served);
     }
 }

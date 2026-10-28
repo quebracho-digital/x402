@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Quebracho\X402;
 
+use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
@@ -23,12 +24,16 @@ final class PayingHttpClient implements ClientInterface {
    *   Refuses whatever would exceed the spending cap.
    * @param ?\Closure $onPaid
    *   fn(array $req, array $receipt): void — e.g. to log what was spent.
+   * @param ?EventDispatcherInterface $events
+   *   Dispatches an AddressCheck on each offer's payTo before signing it;
+   *   NULL screens nothing.
    */
   public function __construct(
     private readonly ClientInterface $client,
     private readonly array $schemes,
     private readonly Budget $budget,
     private readonly ?\Closure $onPaid = NULL,
+    private readonly ?EventDispatcherInterface $events = NULL,
   ) {}
 
   public function sendRequest(RequestInterface $request): ResponseInterface {
@@ -48,7 +53,8 @@ final class PayingHttpClient implements ClientInterface {
     // The first offer we have a scheme for and the budget allows.
     foreach ($required['accepts'] ?? [] as $req) {
       foreach ($this->schemes as $scheme) {
-        if (!$scheme->supports((string) ($req['network'] ?? '')) || !$this->budget->allows($req)) {
+        if (!$scheme->supports((string) ($req['network'] ?? '')) || !$this->budget->allows($req)
+          || AddressCheck::run($this->events, AddressCheck::PAY_TO, is_string($req['payTo'] ?? NULL) ? $req['payTo'] : NULL, $req) !== NULL) {
           continue;
         }
         // Spent when signed: a signed authorization is money the seller can

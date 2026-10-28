@@ -38,4 +38,11 @@ interface Scheme {
    */
   public function verify(array $payment, array $req): ?string;
 
+  /**
+   * Who pays, in the chain's own form, or NULL when unreadable.
+   *
+   * Trust it only after verify() passed: before that, anyone wrote it.
+   */
+  public function payer(array $payment): ?string;
+
 }

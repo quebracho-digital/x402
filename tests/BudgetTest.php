@@ -34,6 +34,9 @@ final class BudgetTest extends TestCase
         yield 'negative' => [['amount' => '-10000']];
         yield 'zero' => [['amount' => '0']];
         yield 'above the cap' => [['amount' => '50001']];
+        yield 'payTo without 0x' => [['payTo' => '000000000000000000000000000000000000dEaD']];
+        yield 'payTo zero-padded' => [['payTo' => '0x00000000000000000000000000000000000000dEaD']];
+        yield 'payTo as array' => [['payTo' => ['0x000000000000000000000000000000000000dEaD']]];
         yield 'beyond uint256' => [['amount' => str_repeat('9', 79)]];
     }
 

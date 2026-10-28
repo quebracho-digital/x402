@@ -76,9 +76,32 @@ Amoy. Any EVM token with EIP-3009:
 Networks::add(chainId: 4202, asset: '0x…', name: 'USDC', version: '2');
 ```
 
+## Address screening
+
+Pass any PSR-14 dispatcher (Symfony's, League's, …) as `$events` to a
+middleware or a paying client, and it dispatches an `AddressCheck`:
+
+- **seller**: on the payer, after the signature verified and before the
+  payment is claimed or the handler runs;
+- **buyer**: on each offer's `payTo`, before signing it (and before the budget
+  is spent).
+
+A listener calls `$check->reject('reason')` to block; the seller answers a
+PaymentRequired with that reason, the buyer skips the offer. A listener that
+throws blocks too (`address_check_failed`). No dispatcher, no screening. The
+lists themselves (OFAC, your own, an API) are the listener's business.
+
+```php
+$dispatcher->addListener(AddressCheck::class, function (AddressCheck $check) use ($denied) {
+    if (in_array(strtolower($check->address), $denied, true)) {
+        $check->reject('address_denied');
+    }
+});
+```
+
 ## Schemes
 
-`Scheme` (`supports`, `pay`, `verify`) is one chain family; experimental until
+`Scheme` (`supports`, `pay`, `verify`, `payer`) is one chain family; experimental until
 1.0. `EvmExact` is the stable one. `NearExact` (`near:testnet`) is
 experimental, see [docs/near.md](docs/near.md).
 

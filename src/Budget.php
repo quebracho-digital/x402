@@ -46,6 +46,11 @@ final class Budget {
     if ($cap === NULL || !is_string($req['amount'] ?? NULL) || !preg_match('/^[1-9][0-9]{0,77}$/', $req['amount'])) {
       return FALSE;
     }
+    // Canonical only: Eip712 pads and strips 0x, so "0330…" or "0x000330…"
+    // would sign to the same address that screening was shown in another form.
+    if (!is_string($req['payTo'] ?? NULL) || !preg_match('/^0x[0-9a-fA-F]{40}$/', $req['payTo'])) {
+      return FALSE;
+    }
     $timeout = $req['maxTimeoutSeconds'] ?? NULL;
     if (!is_int($timeout) || $timeout < 1 || $timeout > self::MAX_TIMEOUT) {
       return FALSE;

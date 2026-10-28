@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Quebracho\X402;
 
+use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -33,6 +34,8 @@ final class X402Middleware implements MiddlewareInterface {
    *   fn(array $payment, array $req): array — a facilitator's settle result
    *   (success, transaction, network, payer, errorReason). NULL is mock
    *   mode: signatures are checked for real, nothing moves on chain.
+   * @param ?EventDispatcherInterface $events
+   *   Dispatches an AddressCheck on the payer; NULL screens nothing.
    */
   public function __construct(
     private readonly array $schemes,
@@ -41,6 +44,7 @@ final class X402Middleware implements MiddlewareInterface {
     private readonly ResponseFactoryInterface $responses,
     private readonly StreamFactoryInterface $streams,
     private readonly ?\Closure $settle = NULL,
+    private readonly ?EventDispatcherInterface $events = NULL,
   ) {}
 
   public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface {
@@ -69,7 +73,9 @@ final class X402Middleware implements MiddlewareInterface {
     }
     $scheme = current(array_filter($this->schemes, fn(Scheme $s) => $s->supports($req['network'])))
       ?: throw new \LogicException("No scheme verifies {$req['network']}.");
-    $reason = $scheme->verify($payment, $req);
+    // Screened once the signature proved who pays, before anything is spent.
+    $reason = $scheme->verify($payment, $req)
+      ?? AddressCheck::run($this->events, AddressCheck::PAYER, $scheme->payer($payment), $req);
     if ($reason !== NULL) {
       return $this->required($accepts, $resource, $reason);
     }
