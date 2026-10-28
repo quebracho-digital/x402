@@ -14,7 +14,7 @@ final class NearExactTest extends TestCase
     private const SENDER_ID = 'buyer.testnet';
     private const RECEIVER_ID = 'seller.testnet';
     private const NONCE = 1_000_001;
-    private const MAX_BLOCK_HEIGHT = 100_000_500;
+    private const MAX_BLOCK_HEIGHT = self::CURRENT_BLOCK_HEIGHT + 60;
 
     private static function req(): array
     {
@@ -24,6 +24,7 @@ final class NearExactTest extends TestCase
             'asset' => NearExact::TESTNET_USDC,
             'amount' => '10000',
             'payTo' => self::RECEIVER_ID,
+            'maxTimeoutSeconds' => 60,
         ];
     }
 
@@ -46,7 +47,6 @@ final class NearExactTest extends TestCase
             secretKey: $kp['keypair'],
             senderId: self::SENDER_ID,
             nonce: self::NONCE,
-            maxBlockHeight: self::MAX_BLOCK_HEIGHT,
             clock: fn() => self::CURRENT_BLOCK_HEIGHT
         );
 
@@ -142,7 +142,7 @@ final class NearExactTest extends TestCase
     public static function tampered(): iterable
     {
         yield 'amount' => [
-            fn(array $p) => ['payload' => ['signed_delegate_action' => base64_encode(NearExact::encodeDelegateAction(
+            fn(array $p) => ['payload' => ['signedDelegateAction' => base64_encode(NearExact::encodeDelegateAction(
                 self::SENDER_ID,
                 NearExact::TESTNET_USDC,
                 'ft_transfer',
@@ -156,7 +156,7 @@ final class NearExactTest extends TestCase
             'invalid_amount'
         ];
         yield 'recipient' => [
-            fn(array $p) => ['payload' => ['signed_delegate_action' => base64_encode(NearExact::encodeDelegateAction(
+            fn(array $p) => ['payload' => ['signedDelegateAction' => base64_encode(NearExact::encodeDelegateAction(
                 self::SENDER_ID,
                 NearExact::TESTNET_USDC,
                 'ft_transfer',
@@ -170,7 +170,7 @@ final class NearExactTest extends TestCase
             'invalid_recipient'
         ];
         yield 'deposit' => [
-            fn(array $p) => ['payload' => ['signed_delegate_action' => base64_encode(NearExact::encodeDelegateAction(
+            fn(array $p) => ['payload' => ['signedDelegateAction' => base64_encode(NearExact::encodeDelegateAction(
                 self::SENDER_ID,
                 NearExact::TESTNET_USDC,
                 'ft_transfer',
@@ -188,7 +188,7 @@ final class NearExactTest extends TestCase
             'unsupported_scheme'
         ];
         yield 'garbage_payload' => [
-            fn(array $p) => ['payload' => ['signed_delegate_action' => 'aW52YWxpZF9kZWxlZ2F0ZV9hY3Rpb25fZ2FyYmFnZQ==']],
+            fn(array $p) => ['payload' => ['signedDelegateAction' => 'aW52YWxpZF9kZWxlZ2F0ZV9hY3Rpb25fZ2FyYmFnZQ==']],
             'invalid_payload'
         ];
     }
@@ -211,10 +211,10 @@ final class NearExactTest extends TestCase
     public function testRejectsTamperedSignature(): void
     {
         $payment = self::payment();
-        $raw = base64_decode($payment['payload']['signed_delegate_action']);
+        $raw = base64_decode($payment['payload']['signedDelegateAction']);
         // Tamper signature byte near the end
         $tamperedRaw = substr($raw, 0, -5) . "\xFF\xFF\xFF\xFF\xFF";
-        $payment['payload']['signed_delegate_action'] = base64_encode($tamperedRaw);
+        $payment['payload']['signedDelegateAction'] = base64_encode($tamperedRaw);
 
         $scheme = new NearExact(clock: fn() => self::CURRENT_BLOCK_HEIGHT);
         self::assertSame('invalid_signature', $scheme->verify($payment, self::req()));
@@ -226,10 +226,23 @@ final class NearExactTest extends TestCase
             secretKey: self::keypair()['secret'],
             senderId: self::SENDER_ID,
             nonce: self::NONCE,
-            maxBlockHeight: self::MAX_BLOCK_HEIGHT,
+            clock: fn() => self::CURRENT_BLOCK_HEIGHT,
         );
         $payment = $scheme->pay(['x402Version' => 2, 'accepts' => [self::req()]], self::req());
         $verifier = new NearExact(clock: fn() => self::CURRENT_BLOCK_HEIGHT);
         self::assertNull($verifier->verify($payment, self::req()));
+    }
+
+    public function testPayloadIsTheSpecShape(): void
+    {
+        self::assertSame(['signedDelegateAction'], array_keys(self::payment()['payload']));
+    }
+
+    public function testRejectsAWindowLongerThanTheTimeout(): void
+    {
+        // Signed 60 blocks ahead, but the seller now allows only 10 seconds.
+        $req = ['maxTimeoutSeconds' => 10] + self::req();
+        $scheme = new NearExact(clock: fn() => self::CURRENT_BLOCK_HEIGHT);
+        self::assertSame('timeout_window_exceeds_maxTimeout', $scheme->verify(self::payment(), $req));
     }
 }

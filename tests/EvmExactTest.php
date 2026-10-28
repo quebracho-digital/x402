@@ -33,10 +33,13 @@ final class EvmExactTest extends TestCase
 
     public static function tampered(): iterable
     {
-        yield 'amount' => [fn(array $p) => ['payload' => ['authorization' => ['value' => '1']]] , 'invalid_amount'];
-        yield 'recipient' => [fn(array $p) => ['payload' => ['authorization' => ['to' => '0x0000000000000000000000000000000000000001']]], 'invalid_recipient'];
-        yield 'payer' => [fn(array $p) => ['payload' => ['authorization' => ['from' => '0x0000000000000000000000000000000000000001']]], 'invalid_signature'];
-        yield 'network' => [fn(array $p) => ['accepted' => ['network' => 'eip155:1']], 'unsupported_scheme'];
+        yield 'amount' => [fn(array $p) => ['payload' => ['authorization' => ['value' => '1']]] , 'invalid_exact_evm_payload_authorization_value_mismatch'];
+        yield 'recipient' => [fn(array $p) => ['payload' => ['authorization' => ['to' => '0x0000000000000000000000000000000000000001']]], 'invalid_exact_evm_payload_recipient_mismatch'];
+        yield 'payer' => [fn(array $p) => ['payload' => ['authorization' => ['from' => '0x0000000000000000000000000000000000000001']]], 'invalid_exact_evm_payload_signature'];
+        yield 'network' => [fn(array $p) => ['accepted' => ['network' => 'eip155:1']], 'invalid_network'];
+        yield 'array nonce' => [fn(array $p) => ['payload' => ['authorization' => ['nonce' => ['x']]]], 'invalid_payload'];
+        yield 'echoed payTo' => [fn(array $p) => ['accepted' => ['payTo' => '0x0000000000000000000000000000000000000001']], 'invalid_payload'];
+        yield 'version' => [fn(array $p) => ['x402Version' => 1], 'invalid_x402_version'];
         yield 'garbage' => [fn(array $p) => ['payload' => ['signature' => 42]], 'invalid_payload'];
     }
 
@@ -49,6 +52,37 @@ final class EvmExactTest extends TestCase
 
     public function testRejectsExpiredPayments(): void
     {
-        self::assertSame('expired', (new EvmExact(clock: fn() => self::NOW + 3600))->verify(self::payment(), self::req()));
+        self::assertSame('invalid_exact_evm_payload_authorization_valid_before', (new EvmExact(clock: fn() => self::NOW + 3600))->verify(self::payment(), self::req()));
+    }
+
+    public function testRejectsAPaymentAboutToExpire(): void
+    {
+        $validBefore = (int) self::payment()['payload']['authorization']['validBefore'];
+        self::assertSame('invalid_exact_evm_payload_authorization_valid_before', (new EvmExact(clock: fn() => $validBefore - 5))->verify(self::payment(), self::req()));
+    }
+
+    public function testRejectsRequirementsWithoutTheTokenDomain(): void
+    {
+        $req = self::req();
+        unset($req['extra']['version']);
+        self::assertSame('invalid_payment_requirements', (new EvmExact(clock: fn() => self::NOW))->verify(self::payment(), $req));
+    }
+
+    public function testRejectsAMalleatedHighSSignature(): void
+    {
+        $payment = self::payment();
+        $sig = substr($payment['payload']['signature'], 2);
+        $n = gmp_init('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141', 16);
+        $highS = str_pad(gmp_strval(gmp_sub($n, gmp_init(substr($sig, 64, 64), 16)), 16), 64, '0', STR_PAD_LEFT);
+        $v = hexdec(substr($sig, 128, 2)) === 27 ? '1c' : '1b';
+        $payment['payload']['signature'] = '0x' . substr($sig, 0, 64) . $highS . $v;
+        self::assertSame('invalid_exact_evm_payload_signature', (new EvmExact(clock: fn() => self::NOW))->verify($payment, self::req()));
+    }
+
+    public function testRejectsAValidityWindowLongerThanTheOffer(): void
+    {
+        $payment = self::payment();
+        $payment['payload']['authorization']['validBefore'] = '99999999999';
+        self::assertSame('invalid_exact_evm_payload_authorization_valid_before', (new EvmExact(clock: fn() => self::NOW))->verify($payment, self::req()));
     }
 }

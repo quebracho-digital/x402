@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Quebracho\X402;
 
 /**
@@ -9,6 +11,11 @@ namespace Quebracho\X402;
  * spent totals if a cap must hold across runs.
  */
 final class Budget {
+
+  /**
+   * The longest a signed payment may stay valid, whatever the seller asks.
+   */
+  public const int MAX_TIMEOUT = 600;
 
   /**
    * Atomic units spent so far, by network.
@@ -29,9 +36,32 @@ final class Budget {
     return new self([$network => Networks::atomic($usd, Networks::get($network)['decimals'])]);
   }
 
+  /**
+   * Whether to sign this offer at all. The seller wrote it, so nothing in
+   * it is trusted: only known tokens, a sane amount and a short validity.
+   */
   public function allows(array $req): bool {
-    $cap = $this->caps[$req['network']] ?? NULL;
-    return $cap !== NULL && gmp_cmp(gmp_add($this->spent[$req['network']] ?? 0, (string) $req['amount']), $cap) <= 0;
+    $network = $req['network'] ?? NULL;
+    $cap = is_string($network) ? $this->caps[$network] ?? NULL : NULL;
+    if ($cap === NULL || !is_string($req['amount'] ?? NULL) || !preg_match('/^[1-9][0-9]{0,77}$/', $req['amount'])) {
+      return FALSE;
+    }
+    $timeout = $req['maxTimeoutSeconds'] ?? NULL;
+    if (!is_int($timeout) || $timeout < 1 || $timeout > self::MAX_TIMEOUT) {
+      return FALSE;
+    }
+    // The cap is in this token's units: any other asset or EIP-712 domain
+    // would make it meaningless (or sign for a token we did not mean).
+    try {
+      $token = Networks::get($network);
+    }
+    catch (\InvalidArgumentException) {
+      return FALSE;
+    }
+    if (strcasecmp((string) ($req['asset'] ?? ''), $token['asset']) !== 0 || ($req['extra']['name'] ?? NULL) !== $token['extra']['name'] || ($req['extra']['version'] ?? NULL) !== $token['extra']['version']) {
+      return FALSE;
+    }
+    return gmp_cmp(gmp_add($this->spent[$network] ?? 0, $req['amount']), $cap) <= 0;
   }
 
   public function spend(array $req): void {

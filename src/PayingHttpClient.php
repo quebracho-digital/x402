@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Quebracho\X402;
 
 use Psr\Http\Client\ClientInterface;
@@ -35,7 +37,13 @@ final class PayingHttpClient implements ClientInterface {
     if ($response->getStatusCode() !== 402 || $header === '') {
       return $response;
     }
-    $required = PaymentHeaders::decode($header);
+    try {
+      $required = PaymentHeaders::decode($header);
+    }
+    catch (InvalidPaymentException) {
+      // Not an offer we can read: the caller sees the 402 itself.
+      return $response;
+    }
 
     // The first offer we have a scheme for and the budget allows.
     foreach ($required['accepts'] ?? [] as $req) {
@@ -43,6 +51,9 @@ final class PayingHttpClient implements ClientInterface {
         if (!$scheme->supports((string) ($req['network'] ?? '')) || !$this->budget->allows($req)) {
           continue;
         }
+        // Spent when signed: a signed authorization is money the seller can
+        // settle on its own, whatever it answers. Never refunded here.
+        $this->budget->spend($req);
         $payment = $scheme->pay($required, $req);
         // The same request, paid: the body is read again from the start.
         if ($request->getBody()->isSeekable()) {
@@ -50,11 +61,9 @@ final class PayingHttpClient implements ClientInterface {
         }
         $paid = $this->client->sendRequest($request->withHeader(PaymentHeaders::SIGNATURE, PaymentHeaders::encode($payment)));
         $receipt = $paid->getHeaderLine(PaymentHeaders::RESPONSE);
-        // Spent once the seller says it settled; a refused payment is not.
         if ($receipt !== '') {
           $receipt = PaymentHeaders::decode($receipt);
-          if (!empty($receipt['success'])) {
-            $this->budget->spend($req);
+          if (($receipt['success'] ?? NULL) === TRUE) {
             $this->onPaid?->__invoke($req, $receipt);
           }
         }

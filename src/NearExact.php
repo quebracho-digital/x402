@@ -1,14 +1,21 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Quebracho\X402;
 
 /**
  * The `exact` scheme on NEAR chains: a NEP-366 Delegate Action meta-transaction.
+ *
+ * Follows x402-foundation specs/schemes/exact/scheme_exact_near.md. Experimental.
+ * Ed25519 keys only: secp256k1 delegate keys are rejected as invalid_payload.
  */
 final class NearExact implements Scheme {
 
   public const string TESTNET_NETWORK = 'near:testnet';
-  public const string TESTNET_USDC = 'usdc.fakes.testnet';
+  // USDC on NEAR testnet, as in the x402 reference implementation.
+  public const string TESTNET_USDC = '3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af';
+  public const int MAX_GAS = 100_000_000_000_000;
   public const int NEP_366_DISCRIMINANT = (1 << 30) + 366; // 1073742190
 
   /**
@@ -18,16 +25,13 @@ final class NearExact implements Scheme {
    *   NEAR account ID of the buyer (e.g. "buyer.testnet").
    * @param ?int $nonce
    *   Access key nonce for the delegate action (must be > current key nonce).
-   * @param ?int $maxBlockHeight
-   *   Expiration block height for the delegate action.
    * @param ?\Closure $clock
-   *   Optional clock callback returning block height/time for testing.
+   *   Returns the current final block height (an RPC `block` call).
    */
   public function __construct(
     private readonly ?string $secretKey = NULL,
     private readonly ?string $senderId = NULL,
     private readonly ?int $nonce = NULL,
-    private readonly ?int $maxBlockHeight = NULL,
     private readonly ?\Closure $clock = NULL,
   ) {}
 
@@ -39,7 +43,9 @@ final class NearExact implements Scheme {
     $secretKey = $this->secretKey ?? throw new \LogicException('Paying needs a buyer secret key.');
     $senderId = $this->senderId ?? throw new \LogicException('Paying needs a sender account ID.');
     $nonce = $this->nonce ?? throw new \LogicException('Paying needs a NEAR nonce.');
-    $maxBlockHeight = $this->maxBlockHeight ?? throw new \LogicException('Paying needs a max block height.');
+    $height = $this->clock ? ($this->clock)() : throw new \LogicException('Paying needs the current block height.');
+    // The spec's timeout mapping: one block per second.
+    $maxBlockHeight = $height + self::timeoutBlocks($req);
 
     if (!extension_loaded('sodium')) {
       throw new \RuntimeException('ext-sodium is required for ed25519 signing on NEAR.');
@@ -92,15 +98,10 @@ final class NearExact implements Scheme {
     $signedDelegateActionBorsh = $delegateActionBorsh . "\x00" . $sigBytes; // 0x00 tag for Ed25519 signature
 
     return [
+      'x402Version' => 2,
+      'resource' => $required['resource'] ?? NULL,
       'accepted' => $req,
-      'payload' => [
-        'signed_delegate_action' => base64_encode($signedDelegateActionBorsh),
-        'signed_delegate_action_hex' => bin2hex($signedDelegateActionBorsh),
-        'sender_id' => $senderId,
-        'public_key' => 'ed25519:' . self::base58Encode($publicKeyBytes),
-        'nonce' => $nonce,
-        'max_block_height' => $maxBlockHeight,
-      ],
+      'payload' => ['signedDelegateAction' => base64_encode($signedDelegateActionBorsh)],
     ];
   }
 
@@ -112,21 +113,22 @@ final class NearExact implements Scheme {
       return 'invalid_payload';
     }
 
-    $rawSignedBorsh = NULL;
-    if (isset($payload['signed_delegate_action']) && is_string($payload['signed_delegate_action'])) {
-      $rawSignedBorsh = base64_decode($payload['signed_delegate_action'], TRUE);
-    }
-    if (!$rawSignedBorsh && isset($payload['signed_delegate_action_hex']) && is_string($payload['signed_delegate_action_hex'])) {
-      $rawSignedBorsh = hex2bin($payload['signed_delegate_action_hex']);
-    }
+    $rawSignedBorsh = is_string($payload['signedDelegateAction'] ?? NULL)
+      ? base64_decode($payload['signedDelegateAction'], TRUE)
+      : NULL;
 
     if (!$rawSignedBorsh || !is_string($rawSignedBorsh)) {
       return 'invalid_payload';
     }
 
     // Check scheme and network
-    if (($accepted['scheme'] ?? NULL) !== 'exact' || ($accepted['network'] ?? NULL) !== $req['network']) {
+    if (($payment['x402Version'] ?? NULL) !== 2 || ($accepted['scheme'] ?? NULL) !== 'exact' || ($accepted['network'] ?? NULL) !== $req['network']) {
       return 'unsupported_scheme';
+    }
+    foreach (['asset', 'payTo', 'amount'] as $field) {
+      if ((string) ($accepted[$field] ?? '') !== (string) ($req[$field] ?? '')) {
+        return 'invalid_' . ($field === 'payTo' ? 'recipient' : $field);
+      }
     }
 
     // Decode SignedDelegateAction Borsh
@@ -137,11 +139,19 @@ final class NearExact implements Scheme {
 
     // Check expiry
     $currentBlockHeight = $this->clock ? ($this->clock)() : 0;
-    if ($currentBlockHeight <= 0) {
+    $remaining = $decoded['max_block_height'] - $currentBlockHeight;
+    if ($currentBlockHeight <= 0 || $remaining <= 0) {
       return 'expired';
     }
-    if ($decoded['max_block_height'] < $currentBlockHeight) {
-      return 'expired';
+    if ($remaining > self::timeoutBlocks($req)) {
+      return 'timeout_window_exceeds_maxTimeout';
+    }
+    // NEAR's own upper bound on delegate-action nonces.
+    if ($decoded['nonce'] >= $currentBlockHeight * 1_000_000) {
+      return 'invalid_nonce';
+    }
+    if ($decoded['gas'] > self::MAX_GAS) {
+      return 'invalid_payload';
     }
 
     // Check token contract (asset)
@@ -169,8 +179,9 @@ final class NearExact implements Scheme {
       return 'invalid_amount';
     }
 
-    // ponytail: the public key is not tied to sender_id here (that needs an
-    // RPC view_access_key); the network rejects a foreign key on settle.
+    // ponytail: offline only. The spec's facilitator MUSTs that need RPC
+    // (view_access_key: key belongs to sender_id, nonce unused, FullAccess;
+    // ft_balance_of, storage_balance_of) are the facilitator's, not ours.
     // Verify Ed25519 signature
     $signableMessageBorsh = pack('V', self::NEP_366_DISCRIMINANT) . $decoded['delegate_action_borsh'];
     $msgHash = hash('sha256', $signableMessageBorsh, TRUE);
@@ -185,6 +196,10 @@ final class NearExact implements Scheme {
     }
 
     return NULL;
+  }
+
+  private static function timeoutBlocks(array $req): int {
+    return max(1, (int) ($req['maxTimeoutSeconds'] ?? 0));
   }
 
   /**
@@ -331,22 +346,6 @@ final class NearExact implements Scheme {
 
   private static function readBytes(string $bytes, int &$offset): string {
     return self::readString($bytes, $offset);
-  }
-
-  private static function base58Encode(string $bytes): string {
-    $alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-    $num = gmp_import($bytes, 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN);
-    $zero = gmp_init(0);
-    $fiftyEight = gmp_init(58);
-    $res = '';
-    while (gmp_cmp($num, $zero) > 0) {
-      [$num, $rem] = gmp_div_qr($num, $fiftyEight);
-      $res = $alphabet[gmp_intval($rem)] . $res;
-    }
-    for ($i = 0; $i < strlen($bytes) && $bytes[$i] === "\x00"; $i++) {
-      $res = '1' . $res;
-    }
-    return $res;
   }
 
 }

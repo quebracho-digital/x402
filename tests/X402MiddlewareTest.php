@@ -12,6 +12,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Quebracho\X402\EvmExact;
+use Quebracho\X402\FileClaims;
 use Quebracho\X402\Networks;
 use Quebracho\X402\PaymentHeaders;
 use Quebracho\X402\Signer;
@@ -25,7 +26,7 @@ final class X402MiddlewareTest extends TestCase
     {
         $req = Networks::requirements('eip155:84532', '0.01', '0x000000000000000000000000000000000000dEaD');
         $f = new Psr17Factory();
-        return new X402Middleware([new EvmExact()], fn(ServerRequestInterface $r) => $r->getUri()->getPath() === '/free' ? null : [$req], $f, $f, $settle);
+        return new X402Middleware([new EvmExact()], fn(ServerRequestInterface $r) => $r->getUri()->getPath() === '/free' ? null : [$req], (new FileClaims(sys_get_temp_dir() . '/x402-claims-' . bin2hex(random_bytes(8))))->__invoke(...), $f, $f, $settle);
     }
 
     private function handler(int $status = 200): RequestHandlerInterface
@@ -77,7 +78,7 @@ final class X402MiddlewareTest extends TestCase
         $payment['payload']['authorization']['value'] = '1';
         $response = $this->middleware()->process($request->withHeader(PaymentHeaders::SIGNATURE, PaymentHeaders::encode($payment)), $this->handler());
         self::assertSame(402, $response->getStatusCode());
-        self::assertSame('invalid_amount', json_decode((string) $response->getBody(), true)['error']);
+        self::assertSame('invalid_exact_evm_payload_authorization_value_mismatch', json_decode((string) $response->getBody(), true)['error']);
         self::assertSame(0, $this->runs);
     }
 

@@ -18,16 +18,32 @@ Needs PHP 8.3+, `ext-gmp`, `ext-sodium`, any PSR-7/17 implementation (e.g.
 ## Seller
 
 ```php
-use Quebracho\X402\{EvmExact, Networks, X402Middleware};
+use Quebracho\X402\{EvmExact, FileClaims, Networks, X402Middleware};
 
 // Price per request: a list of offers, or null when it is free.
 $price = fn ($request) => [Networks::requirements('eip155:84532', '0.01', $payTo)];
-$middleware = new X402Middleware([new EvmExact()], $price, $psr17, $psr17, $settle);
+$middleware = new X402Middleware([new EvmExact()], $price, $claim, $psr17, $psr17, $settle);
 ```
+
+`$claim` makes each payment buy one delivery, even before it settles:
+`(new FileClaims('/var/x402-claims'))(...)` on one host, or any atomic
+`fn(string $key): bool` (DB unique key, Redis `SET NX`) on several.
 
 Unpaid → `402` with `PAYMENT-REQUIRED`. Paid → verify offline, run the
 handler, settle only on 2xx, answer with `PAYMENT-RESPONSE`. Without `$settle`
 (a facilitator callback) it runs in mock mode: real verification, no settle.
+
+### MCP
+
+For an MCP server over Streamable HTTP, `X402McpMiddleware` follows the
+official [x402 MCP transport](https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/mcp.md):
+an unpaid `tools/call` gets `isError` + PaymentRequired, the payment comes in
+`params._meta["x402/payment"]`, the receipt in `result._meta["x402/payment-response"]`.
+
+```php
+$price = fn (array $params) => $params['name'] === 'wisdom' ? [Networks::requirements(...)] : null;
+$middleware = new X402McpMiddleware([new EvmExact()], $price, $claim, $psr17, $psr17, $settle);
+```
 
 ## Buyer
 
@@ -41,8 +57,15 @@ $client = new PayingHttpClient(
 );
 ```
 
-Pays a 402 once and retries the same request. The budget is a per-network cap,
-in memory, spent only when the seller confirms settlement.
+For MCP, `new PayingMcpClient($psr18, $schemes, $budget, $psr17Streams, $onPaid)`
+goes under the MCP client's HTTP transport instead: it pays a PaymentRequired
+tool result once, resending the call with `params._meta["x402/payment"]`, and
+reads the receipt from `result._meta["x402/payment-response"]`.
+
+`PayingHttpClient` pays a 402 once and retries the same request. The budget is a per-network cap,
+in memory, spent when it signs (a signed authorization is money the seller
+can settle) and never refunded on the seller's word. Both buyers sign only
+known tokens (`Networks`), integer amounts and validities up to 10 minutes.
 
 ## Networks
 

@@ -50,9 +50,10 @@ final class Signer {
     $n = $generator->getOrder();
     $p = $curve->getPrime();
     [$r, $s, $v] = [gmp_init($m[1], 16), gmp_init($m[2], 16), hexdec($m[3]) - 27];
-    if (!in_array($v, [0, 1], TRUE) || gmp_sign($r) <= 0 || gmp_cmp($r, $n) >= 0 || gmp_sign($s) <= 0 || gmp_cmp($s, $n) >= 0) {
+    if (!in_array($v, [0, 1], TRUE) || gmp_sign($r) <= 0 || gmp_cmp($r, $n) >= 0 || gmp_sign($s) <= 0 || gmp_cmp($s, gmp_div_q($n, 2)) > 0) {
       return NULL;
     }
+    // Low-s only (EIP-2): (r, n−s) is the same signature, malleated.
     // R = (r, y) on y² = x³ + 7, with y's parity from v. p ≡ 3 mod 4.
     $y = gmp_powm(gmp_mod(gmp_add(gmp_powm($r, 3, $p), 7), $p), gmp_div_q(gmp_add($p, 1), 4), $p);
     if (gmp_cmp(gmp_powm($y, 2, $p), gmp_mod(gmp_add(gmp_powm($r, 3, $p), 7), $p)) !== 0) {

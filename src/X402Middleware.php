@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Quebracho\X402;
 
 use Psr\Http\Message\ResponseFactoryInterface;
@@ -23,6 +25,10 @@ final class X402Middleware implements MiddlewareInterface {
    * @param \Closure $price
    *   fn(ServerRequestInterface): ?array — the `accepts` list (payment
    *   requirements) for a request, or NULL when it is free.
+   * @param \Closure $claim
+   *   fn(string $key): bool — TRUE the first time a payment is seen, FALSE
+   *   after; atomic and durable (FileClaims, or a DB unique key). Runs before
+   *   the handler, so a payment buys one delivery even before it settles.
    * @param ?\Closure $settle
    *   fn(array $payment, array $req): array — a facilitator's settle result
    *   (success, transaction, network, payer, errorReason). NULL is mock
@@ -31,6 +37,7 @@ final class X402Middleware implements MiddlewareInterface {
   public function __construct(
     private readonly array $schemes,
     private readonly \Closure $price,
+    private readonly \Closure $claim,
     private readonly ResponseFactoryInterface $responses,
     private readonly StreamFactoryInterface $streams,
     private readonly ?\Closure $settle = NULL,
@@ -62,11 +69,13 @@ final class X402Middleware implements MiddlewareInterface {
     }
     $scheme = current(array_filter($this->schemes, fn(Scheme $s) => $s->supports($req['network'])))
       ?: throw new \LogicException("No scheme verifies {$req['network']}.");
-    // ponytail: no spent-nonce store, so a payment replays until it expires
-    // in mock mode; a real facilitator rejects the spent nonce on settle.
     $reason = $scheme->verify($payment, $req);
     if ($reason !== NULL) {
       return $this->required($accepts, $resource, $reason);
+    }
+    // Spent before it runs: N concurrent copies get one delivery.
+    if (!($this->claim)(Settlement::key($payment))) {
+      return $this->required($accepts, $resource, 'duplicate_settlement');
     }
 
     $response = $handler->handle($request);
@@ -74,11 +83,9 @@ final class X402Middleware implements MiddlewareInterface {
       // Nothing delivered, nothing charged.
       return $response;
     }
-    $receipt = $this->settle
-      ? ($this->settle)($payment, $req)
-      : ['success' => TRUE, 'transaction' => '', 'network' => $req['network'], 'payer' => $payment['payload']['authorization']['from'] ?? $payment['payload']['sender_id'] ?? NULL];
-    if (empty($receipt['success'])) {
-      return $this->required($accepts, $resource, $receipt['errorReason'] ?? 'settlement_failed');
+    $receipt = Settlement::run($this->settle, $payment, $req);
+    if ($receipt['success'] !== TRUE) {
+      return $this->required($accepts, $resource, $receipt['errorReason']);
     }
     return $response->withHeader(PaymentHeaders::RESPONSE, PaymentHeaders::encode($receipt));
   }

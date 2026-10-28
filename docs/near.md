@@ -1,4 +1,5 @@
 # NEAR Protocol Payment Scheme Research & Specification
+> **Superseded on payload shape and timeout:** `NearExact` now follows the official spec, [x402-foundation/x402 `specs/schemes/exact/scheme_exact_near.md`](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_near.md): payload is only `{"signedDelegateAction": base64}`, `max_block_height = height + maxTimeoutSeconds`. Where this research note disagrees, the spec wins.
 
 ## Overview
 This document specifies how NEAR Protocol (`near:testnet`) can be integrated as a second chain family in `packages/x402` (PHP library for x402 payment HTTP headers and verification).
