@@ -46,7 +46,9 @@ final class Settlement
             return $receipt;
         }
         $reason = is_array($receipt) && is_string($receipt['errorReason'] ?? null) ? $receipt['errorReason'] : 'unexpected_settle_error';
+        // Kept so a broadcast that has not confirmed yet (settlement_pending) can be reconciled.
+        $tx = is_array($receipt) && is_string($receipt['transaction'] ?? null) ? $receipt['transaction'] : '';
 
-        return ['success' => false, 'errorReason' => $reason, 'transaction' => '', 'network' => $req['network']];
+        return ['success' => false, 'errorReason' => $reason, 'transaction' => $tx, 'network' => $req['network']];
     }
 }

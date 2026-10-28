@@ -37,4 +37,12 @@ final class SettlementTest extends TestCase
         self::assertSame('insufficient_funds', Settlement::run(fn () => ['success' => false, 'errorReason' => 'insufficient_funds'], self::payment(), $req)['errorReason']);
         self::assertFalse(Settlement::run(fn () => throw new \RuntimeException(), self::payment(), $req)['success']);
     }
+
+    public function testAPendingSettlementKeepsItsTransaction(): void
+    {
+        $pending = Settlement::run(fn () => ['success' => false, 'errorReason' => 'settlement_pending', 'transaction' => '0xtx'], self::payment(), ['network' => 'eip155:84532']);
+        self::assertFalse($pending['success'], 'the output is still withheld');
+        self::assertSame('0xtx', $pending['transaction']);
+        self::assertSame('', Settlement::run(fn () => ['success' => false, 'transaction' => ['0xtx']], self::payment(), ['network' => 'eip155:84532'])['transaction']);
+    }
 }
