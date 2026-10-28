@@ -25,14 +25,15 @@ final class X402McpMiddlewareTest extends TestCase
     protected function setUp(): void
     {
         // One durable store per test, shared by every middleware it builds.
-        $this->claims = (new FileClaims(sys_get_temp_dir() . '/x402-claims-' . bin2hex(random_bytes(8))))->__invoke(...);
+        $this->claims = (new FileClaims(sys_get_temp_dir().'/x402-claims-'.bin2hex(random_bytes(8))))->__invoke(...);
     }
 
     private function middleware(?\Closure $settle = null): X402McpMiddleware
     {
         $req = Networks::requirements('eip155:84532', '0.01', '0x000000000000000000000000000000000000dEaD');
         $f = new Psr17Factory();
-        return new X402McpMiddleware([new EvmExact()], fn(array $params) => $params['name'] === 'wisdom' ? [$req] : null, $this->claims, $f, $f, $settle);
+
+        return new X402McpMiddleware([new EvmExact()], fn (array $params) => 'wisdom' === $params['name'] ? [$req] : null, $this->claims, $f, $f, $settle);
     }
 
     /** A tool server answering id 2, as JSON or as a buffered SSE stream. */
@@ -42,11 +43,16 @@ final class X402McpMiddlewareTest extends TestCase
         $response = $sse
             ? new Response(200, ['Content-Type' => 'text/event-stream'], "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\nevent: message\ndata: $json\n\n")
             : new Response(200, ['Content-Type' => 'application/json'], $json);
-        return new class ($this->runs, $response) implements RequestHandlerInterface {
-            public function __construct(private int &$runs, private ResponseInterface $response) {}
+
+        return new class($this->runs, $response) implements RequestHandlerInterface {
+            public function __construct(private int &$runs, private ResponseInterface $response)
+            {
+            }
+
             public function handle(ServerRequestInterface $request): ResponseInterface
             {
-                $this->runs++;
+                ++$this->runs;
+
                 return $this->response;
             }
         };
@@ -55,9 +61,10 @@ final class X402McpMiddlewareTest extends TestCase
     private static function call(string $tool, ?array $payment = null): ServerRequest
     {
         $params = ['name' => $tool, 'arguments' => []];
-        if ($payment !== null) {
+        if (null !== $payment) {
             $params['_meta'][X402McpMiddleware::PAYMENT] = $payment;
         }
+
         return new ServerRequest('POST', 'https://example.test/mcp', ['Content-Type' => 'application/json'], json_encode(['jsonrpc' => '2.0', 'id' => 2, 'method' => 'tools/call', 'params' => $params]));
     }
 
@@ -65,6 +72,7 @@ final class X402McpMiddlewareTest extends TestCase
     {
         $required = self::toolResult($this->middleware()->process(self::call('wisdom'), $this->handler()))['structuredContent'];
         $buyer = new EvmExact(new Signer('0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318'));
+
         return self::call('wisdom', $buyer->pay($required, $required['accepts'][0]));
     }
 
@@ -75,6 +83,7 @@ final class X402McpMiddlewareTest extends TestCase
             preg_match_all('/^data: (.*)$/m', $body, $m);
             $body = end($m[1]);
         }
+
         return json_decode($body, true)['result'];
     }
 
@@ -121,7 +130,11 @@ final class X402McpMiddlewareTest extends TestCase
     public function testFailedToolIsNotCharged(): void
     {
         $settled = false;
-        $settle = function () use (&$settled) { $settled = true; return ['success' => true]; };
+        $settle = function () use (&$settled) {
+            $settled = true;
+
+            return ['success' => true];
+        };
         $result = self::toolResult($this->middleware($settle)->process($this->paidCall(), $this->handler(['isError' => true, 'content' => []])));
         self::assertFalse($settled);
         self::assertArrayNotHasKey('_meta', $result);
@@ -129,7 +142,7 @@ final class X402McpMiddlewareTest extends TestCase
 
     public function testFailedSettlementWithholdsTheToolOutput(): void
     {
-        $settle = fn() => ['success' => false, 'errorReason' => 'insufficient_funds'];
+        $settle = fn () => ['success' => false, 'errorReason' => 'insufficient_funds'];
         $response = $this->middleware($settle)->process($this->paidCall(), $this->handler());
         $result = self::toolResult($response);
         self::assertTrue($result['isError']);
@@ -139,7 +152,7 @@ final class X402McpMiddlewareTest extends TestCase
 
     public function testBatchWithAPaidCallIsRejected(): void
     {
-        $batch = '[' . (string) self::call('echo')->getBody() . ',' . (string) self::call('wisdom')->getBody() . ']';
+        $batch = '['.(string) self::call('echo')->getBody().','.(string) self::call('wisdom')->getBody().']';
         $response = $this->middleware()->process(new ServerRequest('POST', 'https://example.test/mcp', [], $batch), $this->handler());
         self::assertSame(-32600, json_decode((string) $response->getBody(), true)['error']['code']);
         self::assertSame(0, $this->runs);
@@ -158,7 +171,11 @@ final class X402McpMiddlewareTest extends TestCase
     {
         $call = $this->paidCall();
         $settled = 0;
-        $settle = function () use (&$settled) { $settled++; return ['success' => true, 'transaction' => '0xabc', 'network' => 'eip155:84532']; };
+        $settle = function () use (&$settled) {
+            ++$settled;
+
+            return ['success' => true, 'transaction' => '0xabc', 'network' => 'eip155:84532'];
+        };
         $this->middleware($settle)->process($call, $this->handler());
         $again = self::toolResult($this->middleware($settle)->process($call, $this->handler()));
         self::assertSame('duplicate_settlement', $again['structuredContent']['error']);
@@ -168,11 +185,11 @@ final class X402McpMiddlewareTest extends TestCase
 
     public static function brokenFacilitators(): iterable
     {
-        yield 'throws' => [fn() => throw new \RuntimeException('timeout'), 'unexpected_settle_error'];
-        yield 'string false' => [fn() => ['success' => 'false'], 'unexpected_settle_error'];
-        yield 'null' => [fn() => null, 'unexpected_settle_error'];
-        yield 'odd reason' => [fn() => ['success' => false, 'errorReason' => ['x']], 'unexpected_settle_error'];
-        yield 'pending' => [fn() => ['success' => false, 'errorReason' => 'settlement_pending', 'transaction' => '0xabc'], 'settlement_pending'];
+        yield 'throws' => [fn () => throw new \RuntimeException('timeout'), 'unexpected_settle_error'];
+        yield 'string false' => [fn () => ['success' => 'false'], 'unexpected_settle_error'];
+        yield 'null' => [fn () => null, 'unexpected_settle_error'];
+        yield 'odd reason' => [fn () => ['success' => false, 'errorReason' => ['x']], 'unexpected_settle_error'];
+        yield 'pending' => [fn () => ['success' => false, 'errorReason' => 'settlement_pending', 'transaction' => '0xabc'], 'settlement_pending'];
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('brokenFacilitators')]

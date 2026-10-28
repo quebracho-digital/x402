@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Quebracho\X402\Tests;
 
-use Quebracho\X402\Signer;
 use PHPUnit\Framework\TestCase;
+use Quebracho\X402\Signer;
 
 final class SignerTest extends TestCase
 {

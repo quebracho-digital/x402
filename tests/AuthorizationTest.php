@@ -17,7 +17,7 @@ final class AuthorizationTest extends TestCase
         $signer = new Signer('0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318');
         $req = Networks::requirements('eip155:84532', '0.01', '0x000000000000000000000000000000000000dEaD');
         $required = ['x402Version' => 2, 'resource' => ['url' => 'https://example.test/mcp'], 'accepts' => [$req]];
-        $nonce = '0x' . str_repeat('ab', 32);
+        $nonce = '0x'.str_repeat('ab', 32);
 
         $payment = PaymentHeaders::decode(PaymentHeaders::encode(Authorization::pay($signer, $required, $req, 1_000, $nonce)));
         $auth = $payment['payload']['authorization'];

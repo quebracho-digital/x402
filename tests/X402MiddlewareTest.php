@@ -26,16 +26,21 @@ final class X402MiddlewareTest extends TestCase
     {
         $req = Networks::requirements('eip155:84532', '0.01', '0x000000000000000000000000000000000000dEaD');
         $f = new Psr17Factory();
-        return new X402Middleware([new EvmExact()], fn(ServerRequestInterface $r) => $r->getUri()->getPath() === '/free' ? null : [$req], (new FileClaims(sys_get_temp_dir() . '/x402-claims-' . bin2hex(random_bytes(8))))->__invoke(...), $f, $f, $settle);
+
+        return new X402Middleware([new EvmExact()], fn (ServerRequestInterface $r) => '/free' === $r->getUri()->getPath() ? null : [$req], (new FileClaims(sys_get_temp_dir().'/x402-claims-'.bin2hex(random_bytes(8))))->__invoke(...), $f, $f, $settle);
     }
 
     private function handler(int $status = 200): RequestHandlerInterface
     {
-        return new class ($this->runs, $status) implements RequestHandlerInterface {
-            public function __construct(private int &$runs, private int $status) {}
+        return new class($this->runs, $status) implements RequestHandlerInterface {
+            public function __construct(private int &$runs, private int $status)
+            {
+            }
+
             public function handle(ServerRequestInterface $request): ResponseInterface
             {
-                $this->runs++;
+                ++$this->runs;
+
                 return new Response($this->status, [], 'paid content');
             }
         };
@@ -47,6 +52,7 @@ final class X402MiddlewareTest extends TestCase
         $required = PaymentHeaders::decode($first->getHeaderLine(PaymentHeaders::REQUIRED));
         $buyer = new EvmExact(new Signer('0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318'));
         $payment = $buyer->pay($required, $required['accepts'][0]);
+
         return new ServerRequest('POST', 'https://example.test/mcp', [PaymentHeaders::SIGNATURE => PaymentHeaders::encode($payment)]);
     }
 
@@ -91,7 +97,11 @@ final class X402MiddlewareTest extends TestCase
     public function testFailedHandlerIsNotSettled(): void
     {
         $settled = false;
-        $response = $this->middleware(function () use (&$settled) { $settled = true; return ['success' => true]; })
+        $response = $this->middleware(function () use (&$settled) {
+            $settled = true;
+
+            return ['success' => true];
+        })
             ->process($this->paidRequest(), $this->handler(500));
         self::assertSame(500, $response->getStatusCode());
         self::assertFalse($settled);
@@ -99,7 +109,7 @@ final class X402MiddlewareTest extends TestCase
 
     public function testFailedSettlementWithholdsTheResponse(): void
     {
-        $response = $this->middleware(fn() => ['success' => false, 'errorReason' => 'insufficient_funds'])
+        $response = $this->middleware(fn () => ['success' => false, 'errorReason' => 'insufficient_funds'])
             ->process($this->paidRequest(), $this->handler());
         self::assertSame(402, $response->getStatusCode());
         self::assertStringNotContainsString('paid content', (string) $response->getBody());

@@ -13,36 +13,35 @@ namespace Quebracho\X402;
  *
  * Experimental until 1.0: a new chain family may still reshape it.
  */
-interface Scheme {
+interface Scheme
+{
+    /**
+     * Whether this scheme handles a CAIP-2 network, e.g. "eip155:84532".
+     */
+    public function supports(string $network): bool;
 
-  /**
-   * Whether this scheme handles a CAIP-2 network, e.g. "eip155:84532".
-   */
-  public function supports(string $network): bool;
+    /**
+     * The buyer's signed payment for one entry of a 402's `accepts`.
+     *
+     * @param array $required
+     *                        The decoded PAYMENT-REQUIRED header
+     * @param array $req
+     *                        The chosen entry of $required['accepts']
+     */
+    public function pay(array $required, array $req): array;
 
-  /**
-   * The buyer's signed payment for one entry of a 402's `accepts`.
-   *
-   * @param array $required
-   *   The decoded PAYMENT-REQUIRED header.
-   * @param array $req
-   *   The chosen entry of $required['accepts'].
-   */
-  public function pay(array $required, array $req): array;
+    /**
+     * Why a payment does not pay exactly $req, or NULL when it does.
+     *
+     * Offline checks only: what the chain alone knows (balance, spent nonce)
+     * is the facilitator's to verify.
+     */
+    public function verify(array $payment, array $req): ?string;
 
-  /**
-   * Why a payment does not pay exactly $req, or NULL when it does.
-   *
-   * Offline checks only: what the chain alone knows (balance, spent nonce)
-   * is the facilitator's to verify.
-   */
-  public function verify(array $payment, array $req): ?string;
-
-  /**
-   * Who pays, in the chain's own form, or NULL when unreadable.
-   *
-   * Trust it only after verify() passed: before that, anyone wrote it.
-   */
-  public function payer(array $payment): ?string;
-
+    /**
+     * Who pays, in the chain's own form, or NULL when unreadable.
+     *
+     * Trust it only after verify() passed: before that, anyone wrote it.
+     */
+    public function payer(array $payment): ?string;
 }

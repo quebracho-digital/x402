@@ -53,13 +53,14 @@ final class BudgetTest extends TestCase
         $budget = new Budget(['eip155:84532' => '50000'], $used, function () use (&$now) { return $now; });
         $budget->spend(self::offer());
         $budget->unsettled(self::offer(), ['payload' => ['authorization' => ['from' => '0xabc', 'nonce' => '0x01', 'validBefore' => '1000']]]);
+
         return $budget;
     }
 
     public function testFreesAnExpiredSignatureTheChainNeverUsed(): void
     {
         $now = 1000;
-        $budget = self::withUnsettled(fn(string $network, string $from, string $nonce) => false, $now);
+        $budget = self::withUnsettled(fn (string $network, string $from, string $nonce) => false, $now);
         $budget->reclaim();
         self::assertSame('10000', $budget->spent('eip155:84532'), 'still valid: the seller may settle it yet');
 
@@ -77,11 +78,11 @@ final class BudgetTest extends TestCase
     public function testKeepsWhatTheChainUsedOrCannotTell(): void
     {
         $now = 2000;
-        $used = self::withUnsettled(fn() => true, $now);
+        $used = self::withUnsettled(fn () => true, $now);
         $used->reclaim();
         self::assertSame('10000', $used->spent('eip155:84532'));
 
-        $down = self::withUnsettled(fn() => throw new \RuntimeException('RPC down'), $now);
+        $down = self::withUnsettled(fn () => throw new \RuntimeException('RPC down'), $now);
         $down->reclaim();
         self::assertSame('10000', $down->spent('eip155:84532'));
 
@@ -93,7 +94,7 @@ final class BudgetTest extends TestCase
     public function testReclaimLooksAtEveryEntry(): void
     {
         $now = 2000;
-        $budget = new Budget(['eip155:84532' => '50000'], fn(string $n, string $from) => $from === '0xaaa', function () use (&$now) { return $now; });
+        $budget = new Budget(['eip155:84532' => '50000'], fn (string $n, string $from) => '0xaaa' === $from, function () use (&$now) { return $now; });
         foreach (['0xaaa' => '1000', '0xbbb' => '1000', '0xccc' => '5000'] as $from => $validBefore) {
             $budget->spend(self::offer());
             $budget->unsettled(self::offer(), ['payload' => ['authorization' => ['from' => $from, 'nonce' => '0x01', 'validBefore' => $validBefore]]]);

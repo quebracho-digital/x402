@@ -32,21 +32,30 @@ final class PayingHttpClientTest extends TestCase
     {
         $f = new Psr17Factory();
         $req = Networks::requirements('eip155:84532', '0.01', '0x000000000000000000000000000000000000dEaD');
-        $middleware = new X402Middleware([new EvmExact()], fn() => [$req], (new FileClaims(sys_get_temp_dir() . '/x402-claims-' . bin2hex(random_bytes(8))))->__invoke(...), $f, $f);
+        $middleware = new X402Middleware([new EvmExact()], fn () => [$req], (new FileClaims(sys_get_temp_dir().'/x402-claims-'.bin2hex(random_bytes(8))))->__invoke(...), $f, $f);
         $test = $this;
-        $handler = new class ($test, $f) implements RequestHandlerInterface {
-            public function __construct(private PayingHttpClientTest $test, private Psr17Factory $f) {}
+        $handler = new class($test, $f) implements RequestHandlerInterface {
+            public function __construct(private PayingHttpClientTest $test, private Psr17Factory $f)
+            {
+            }
+
             public function handle(ServerRequestInterface $request): ResponseInterface
             {
-                $this->test->served++;
-                return $this->f->createResponse(200)->withBody($this->f->createStream('wisdom: ' . $request->getBody()));
+                ++$this->test->served;
+
+                return $this->f->createResponse(200)->withBody($this->f->createStream('wisdom: '.$request->getBody()));
             }
         };
-        return new class ($middleware, $handler) implements ClientInterface {
-            public function __construct(private X402Middleware $middleware, private RequestHandlerInterface $handler) {}
+
+        return new class($middleware, $handler) implements ClientInterface {
+            public function __construct(private X402Middleware $middleware, private RequestHandlerInterface $handler)
+            {
+            }
+
             public function sendRequest(RequestInterface $request): ResponseInterface
             {
                 $server = new ServerRequest($request->getMethod(), $request->getUri(), $request->getHeaders(), (string) $request->getBody());
+
                 return $this->middleware->process($server, $this->handler);
             }
         };
@@ -55,6 +64,7 @@ final class PayingHttpClientTest extends TestCase
     private function buyer(Budget $budget): PayingHttpClient
     {
         $key = new Signer('0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318');
+
         return new PayingHttpClient($this->seller(), [new EvmExact($key)], $budget);
     }
 
@@ -72,7 +82,7 @@ final class PayingHttpClientTest extends TestCase
     {
         $budget = Budget::usd('eip155:84532', '0.02');
         $client = $this->buyer($budget);
-        $statuses = array_map(fn() => $client->sendRequest(new Request('POST', 'https://example.test/mcp'))->getStatusCode(), range(1, 3));
+        $statuses = array_map(fn () => $client->sendRequest(new Request('POST', 'https://example.test/mcp'))->getStatusCode(), range(1, 3));
 
         self::assertSame([200, 200, 402], $statuses);
         self::assertSame(2, $this->served);

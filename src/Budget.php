@@ -15,126 +15,131 @@ namespace Quebracho\X402;
  * it has expired and the chain says its nonce is unused: then it can never
  * move money.
  */
-final class Budget {
+final class Budget
+{
+    /**
+     * The longest a signed payment may stay valid, whatever the seller asks.
+     */
+    public const int MAX_TIMEOUT = 600;
 
-  /**
-   * The longest a signed payment may stay valid, whatever the seller asks.
-   */
-  public const int MAX_TIMEOUT = 600;
+    /**
+     * Atomic units spent so far, by network.
+     */
+    private array $spent = [];
 
-  /**
-   * Atomic units spent so far, by network.
-   */
-  private array $spent = [];
+    /**
+     * Signed but not confirmed settled: [network, amount, from, nonce, validBefore].
+     */
+    private array $unsettled = [];
 
-  /**
-   * Signed but not confirmed settled: [network, amount, from, nonce, validBefore].
-   */
-  private array $unsettled = [];
-
-  /**
-   * @param array<string, string> $caps
-   *   Network => maximum atomic units, e.g. ['eip155:84532' => '50000'] for
-   *   0.05 USDC. Networks without a cap get nothing.
-   * @param ?\Closure $used
-   *   fn(string $network, string $from, string $nonce): bool — the token's
-   *   EIP-3009 authorizationState on chain. NULL never frees anything.
-   * @param ?\Closure $clock
-   *   Returns the current Unix time; tests pin it.
-   */
-  public function __construct(
-    private readonly array $caps,
-    private readonly ?\Closure $used = NULL,
-    private readonly ?\Closure $clock = NULL,
-  ) {}
-
-  /**
-   * A cap in dollars on one network, converted with the token's decimals.
-   */
-  public static function usd(string $network, string $usd, ?\Closure $used = NULL): self {
-    return new self([$network => Networks::atomic($usd, Networks::get($network)['decimals'])], $used);
-  }
-
-  /**
-   * Whether to sign this offer at all. The seller wrote it, so nothing in
-   * it is trusted: only known tokens, a sane amount and a short validity.
-   */
-  public function allows(array $req): bool {
-    $network = $req['network'] ?? NULL;
-    $cap = is_string($network) ? $this->caps[$network] ?? NULL : NULL;
-    if ($cap === NULL || !is_string($req['amount'] ?? NULL) || !preg_match('/^[1-9][0-9]{0,77}$/', $req['amount'])) {
-      return FALSE;
+    /**
+     * @param array<string, string> $caps
+     *                                     Network => maximum atomic units, e.g. ['eip155:84532' => '50000'] for
+     *                                     0.05 USDC. Networks without a cap get nothing.
+     * @param ?\Closure             $used
+     *                                     fn(string $network, string $from, string $nonce): bool — the token's
+     *                                     EIP-3009 authorizationState on chain. NULL never frees anything.
+     * @param ?\Closure             $clock
+     *                                     Returns the current Unix time; tests pin it
+     */
+    public function __construct(
+        private readonly array $caps,
+        private readonly ?\Closure $used = null,
+        private readonly ?\Closure $clock = null,
+    ) {
     }
-    // Canonical only: Eip712 pads and strips 0x, so "0330…" or "0x000330…"
-    // would sign to the same address that screening was shown in another form.
-    if (!is_string($req['payTo'] ?? NULL) || !preg_match('/^0x[0-9a-fA-F]{40}$/', $req['payTo'])) {
-      return FALSE;
-    }
-    $timeout = $req['maxTimeoutSeconds'] ?? NULL;
-    if (!is_int($timeout) || $timeout < 1 || $timeout > self::MAX_TIMEOUT) {
-      return FALSE;
-    }
-    // The cap is in this token's units: any other asset or EIP-712 domain
-    // would make it meaningless (or sign for a token we did not mean).
-    try {
-      $token = Networks::get($network);
-    }
-    catch (\InvalidArgumentException) {
-      return FALSE;
-    }
-    if (strcasecmp((string) ($req['asset'] ?? ''), $token['asset']) !== 0 || ($req['extra']['name'] ?? NULL) !== $token['extra']['name'] || ($req['extra']['version'] ?? NULL) !== $token['extra']['version']) {
-      return FALSE;
-    }
-    return gmp_cmp(gmp_add($this->spent[$network] ?? 0, $req['amount']), $cap) <= 0;
-  }
 
-  public function spend(array $req): void {
-    $this->spent[$req['network']] = gmp_strval(gmp_add($this->spent[$req['network']] ?? 0, (string) $req['amount']));
-  }
-
-  /**
-   * Remembers a signed payment whose receipt did not say success, so
-   * reclaim() can free it once it can no longer settle.
-   */
-  public function unsettled(array $req, array $payment): void {
-    $auth = $payment['payload']['authorization'] ?? NULL;
-    // ponytail: EVM (EIP-3009) only; other families stay spent.
-    if (is_array($auth)) {
-      $this->unsettled[] = [$req['network'], (string) $req['amount'], (string) $auth['from'], (string) $auth['nonce'], (int) $auth['validBefore']];
+    /**
+     * A cap in dollars on one network, converted with the token's decimals.
+     */
+    public static function usd(string $network, string $usd, ?\Closure $used = null): self
+    {
+        return new self([$network => Networks::atomic($usd, Networks::get($network)['decimals'])], $used);
     }
-  }
 
-  /**
-   * Frees the expired, never-used signatures; called before paying.
-   */
-  public function reclaim(): void {
-    if ($this->used === NULL) {
-      return;
+    /**
+     * Whether to sign this offer at all. The seller wrote it, so nothing in
+     * it is trusted: only known tokens, a sane amount and a short validity.
+     */
+    public function allows(array $req): bool
+    {
+        $network = $req['network'] ?? null;
+        $cap = is_string($network) ? $this->caps[$network] ?? null : null;
+        if (null === $cap || !is_string($req['amount'] ?? null) || !preg_match('/^[1-9][0-9]{0,77}$/', $req['amount'])) {
+            return false;
+        }
+        // Canonical only: Eip712 pads and strips 0x, so "0330…" or "0x000330…"
+        // would sign to the same address that screening was shown in another form.
+        if (!is_string($req['payTo'] ?? null) || !preg_match('/^0x[0-9a-fA-F]{40}$/', $req['payTo'])) {
+            return false;
+        }
+        $timeout = $req['maxTimeoutSeconds'] ?? null;
+        if (!is_int($timeout) || $timeout < 1 || $timeout > self::MAX_TIMEOUT) {
+            return false;
+        }
+        // The cap is in this token's units: any other asset or EIP-712 domain
+        // would make it meaningless (or sign for a token we did not mean).
+        try {
+            $token = Networks::get($network);
+        } catch (\InvalidArgumentException) {
+            return false;
+        }
+        if (0 !== strcasecmp((string) ($req['asset'] ?? ''), $token['asset']) || ($req['extra']['name'] ?? null) !== $token['extra']['name'] || ($req['extra']['version'] ?? null) !== $token['extra']['version']) {
+            return false;
+        }
+
+        return gmp_cmp(gmp_add($this->spent[$network] ?? 0, $req['amount']), $cap) <= 0;
     }
-    $now = $this->clock ? ($this->clock)() : time();
-    foreach ($this->unsettled as $i => [$network, $amount, $from, $nonce, $validBefore]) {
-      // Still valid, or close enough that the chain's clock may disagree with
-      // ours: the seller may settle it yet.
-      // ponytail: fixed 60 s skew margin; read the latest block's timestamp if it bites.
-      if ($validBefore + 60 >= $now) {
-        continue;
-      }
-      try {
-        $used = ($this->used)($network, $from, $nonce);
-      }
-      catch (\Throwable) {
-        // Unknown: stays spent, asked again next time.
-        continue;
-      }
-      if ($used === FALSE) {
-        $this->spent[$network] = gmp_strval(gmp_sub($this->spent[$network] ?? 0, $amount));
-      }
-      unset($this->unsettled[$i]);
+
+    public function spend(array $req): void
+    {
+        $this->spent[$req['network']] = gmp_strval(gmp_add($this->spent[$req['network']] ?? 0, (string) $req['amount']));
     }
-  }
 
-  public function spent(string $network): string {
-    return $this->spent[$network] ?? '0';
-  }
+    /**
+     * Remembers a signed payment whose receipt did not say success, so
+     * reclaim() can free it once it can no longer settle.
+     */
+    public function unsettled(array $req, array $payment): void
+    {
+        $auth = $payment['payload']['authorization'] ?? null;
+        // ponytail: EVM (EIP-3009) only; other families stay spent.
+        if (is_array($auth)) {
+            $this->unsettled[] = [$req['network'], (string) $req['amount'], (string) $auth['from'], (string) $auth['nonce'], (int) $auth['validBefore']];
+        }
+    }
 
+    /**
+     * Frees the expired, never-used signatures; called before paying.
+     */
+    public function reclaim(): void
+    {
+        if (null === $this->used) {
+            return;
+        }
+        $now = $this->clock ? ($this->clock)() : time();
+        foreach ($this->unsettled as $i => [$network, $amount, $from, $nonce, $validBefore]) {
+            // Still valid, or close enough that the chain's clock may disagree with
+            // ours: the seller may settle it yet.
+            // ponytail: fixed 60 s skew margin; read the latest block's timestamp if it bites.
+            if ($validBefore + 60 >= $now) {
+                continue;
+            }
+            try {
+                $used = ($this->used)($network, $from, $nonce);
+            } catch (\Throwable) {
+                // Unknown: stays spent, asked again next time.
+                continue;
+            }
+            if (false === $used) {
+                $this->spent[$network] = gmp_strval(gmp_sub($this->spent[$network] ?? 0, $amount));
+            }
+            unset($this->unsettled[$i]);
+        }
+    }
+
+    public function spent(string $network): string
+    {
+        return $this->spent[$network] ?? '0';
+    }
 }
