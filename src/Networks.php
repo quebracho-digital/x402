@@ -34,7 +34,73 @@ final class Networks {
       'rpc' => 'https://rpc.testnet.arc.network',
       'explorer' => 'https://testnet.arcscan.app/tx/',
     ],
+    // ponytail: addresses and EIP-712 domains below are unverified against
+    // the contracts; the first testnet payment on each one confirms them.
+    'eip155:11155111' => [
+      'label' => 'Ethereum Sepolia (USDC)',
+      'asset' => '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
+      'decimals' => 6,
+      'extra' => ['name' => 'USDC', 'version' => '2'],
+      'rpc' => 'https://ethereum-sepolia-rpc.publicnode.com',
+      'explorer' => 'https://sepolia.etherscan.io/tx/',
+    ],
+    'eip155:43113' => [
+      'label' => 'Avalanche Fuji (USDC)',
+      'asset' => '0x5425890298aed601595a70AB815c96711a31Bc65',
+      'decimals' => 6,
+      'extra' => ['name' => 'USD Coin', 'version' => '2'],
+      'rpc' => 'https://api.avax-test.network/ext/bc/C/rpc',
+      'explorer' => 'https://testnet.snowtrace.io/tx/',
+    ],
+    'eip155:80002' => [
+      'label' => 'Polygon Amoy (USDC)',
+      'asset' => '0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582',
+      'decimals' => 6,
+      'extra' => ['name' => 'USDC', 'version' => '2'],
+      'rpc' => 'https://rpc-amoy.polygon.technology',
+      'explorer' => 'https://amoy.polygonscan.com/tx/',
+    ],
   ];
+
+  /**
+   * Networks added at runtime with add(), on top of ALL.
+   */
+  private static array $added = [];
+
+  /**
+   * Adds any EVM chain whose token implements EIP-3009.
+   *
+   * $name and $version are the token's EIP-712 domain: read them from the
+   * contract (name(), version()), since a wrong one makes every signature
+   * invalid. Whether the chain is a testnet is the caller's responsibility.
+   *
+   * @throws \InvalidArgumentException
+   *   A malformed chain id or token address.
+   */
+  public static function add(int $chainId, string $asset, string $name, string $version, int $decimals = 6, string $label = '', string $rpc = '', string $explorer = ''): string {
+    if ($chainId <= 0 || !preg_match('/^0x[0-9a-fA-F]{40}$/', $asset)) {
+      throw new \InvalidArgumentException('A chain id is positive and a token address is 0x followed by 40 hex characters.');
+    }
+    $network = "eip155:$chainId";
+    self::$added[$network] = [
+      'label' => $label ?: $network,
+      'asset' => $asset,
+      'decimals' => $decimals,
+      'extra' => ['name' => $name, 'version' => $version],
+      'rpc' => $rpc,
+      'explorer' => $explorer,
+    ];
+    return $network;
+  }
+
+  /**
+   * One network's settings, built in or added.
+   *
+   * @throws \InvalidArgumentException
+   */
+  public static function get(string $network): array {
+    return self::$added[$network] ?? self::ALL[$network] ?? throw new \InvalidArgumentException("Unsupported network: $network.");
+  }
 
   /**
    * How long the buyer's signed payment stays valid, in seconds, by default.
@@ -50,7 +116,7 @@ final class Networks {
    *   Unknown network, or a price the token cannot represent.
    */
   public static function requirements(string $network, string $usd, string $payTo, int $timeout = self::TIMEOUT): array {
-    $token = self::ALL[$network] ?? throw new \InvalidArgumentException("Unsupported network: $network.");
+    $token = self::get($network);
     return [
       'scheme' => 'exact',
       'network' => $network,
