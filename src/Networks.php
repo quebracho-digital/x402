@@ -12,11 +12,20 @@ final class Networks {
   /**
    * CAIP-2 network => its USDC.
    *
-   * `extra` is the token's EIP-712 domain (on Solana the facilitator adds
+   * `extra` is the token's EIP-712 domain (the facilitator adds
    * its fee payer); `rpc` a public node, for sweeping; `explorer` where
    * people see a transaction.
    */
+  // Testnets only: this library never moves real money.
   public const ALL = [
+    'eip155:84532' => [
+      'label' => 'Base Sepolia (USDC)',
+      'asset' => '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      'decimals' => 6,
+      'extra' => ['name' => 'USDC', 'version' => '2'],
+      'rpc' => 'https://sepolia.base.org',
+      'explorer' => 'https://sepolia.basescan.org/tx/',
+    ],
     'eip155:5042002' => [
       'label' => 'Arc testnet (USDC)',
       'asset' => '0x3600000000000000000000000000000000000000',
@@ -24,36 +33,6 @@ final class Networks {
       'extra' => ['name' => 'USDC', 'version' => '2'],
       'rpc' => 'https://rpc.testnet.arc.network',
       'explorer' => 'https://testnet.arcscan.app/tx/',
-    ],
-    'eip155:5042' => [
-      'label' => 'Arc (USDC)',
-      'asset' => '0x3600000000000000000000000000000000000000',
-      'decimals' => 6,
-      'extra' => ['name' => 'USDC', 'version' => '2'],
-      'rpc' => 'https://rpc.mainnet.arc.io',
-      'explorer' => 'https://explorer.arc.io/tx/',
-    ],
-    // cspell:disable-next-line
-    'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1' => [
-      'label' => 'Solana devnet (USDC)',
-      // cspell:disable-next-line
-      'asset' => '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
-      'decimals' => 6,
-      'extra' => [],
-      'rpc' => 'https://api.devnet.solana.com',
-      // ponytail: opens on mainnet, where devnet's tx is one cluster switch
-      // away; explorers put the cluster after the hash, links put it before.
-      'explorer' => 'https://explorer.solana.com/tx/',
-    ],
-    // cspell:disable-next-line
-    'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp' => [
-      'label' => 'Solana (USDC)',
-      // cspell:disable-next-line
-      'asset' => 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-      'decimals' => 6,
-      'extra' => [],
-      'rpc' => 'https://api.mainnet-beta.solana.com',
-      'explorer' => 'https://solscan.io/tx/',
     ],
   ];
 
