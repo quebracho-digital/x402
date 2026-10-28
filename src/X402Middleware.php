@@ -98,7 +98,9 @@ final class X402Middleware implements MiddlewareInterface {
     }
     $receipt = Settlement::run($this->settle, $payment, $req);
     if ($receipt['success'] !== TRUE) {
-      return $this->required($accepts, $resource, $receipt['errorReason']);
+      // The spec (transports-v2/http.md) sends the failed SettlementResponse too.
+      return $this->required($accepts, $resource, $receipt['errorReason'])
+        ->withHeader(PaymentHeaders::RESPONSE, PaymentHeaders::encode($receipt));
     }
     return $response->withHeader(PaymentHeaders::RESPONSE, PaymentHeaders::encode($receipt));
   }

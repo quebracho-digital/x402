@@ -36,6 +36,7 @@ final class BudgetTest extends TestCase
         yield 'above the cap' => [['amount' => '50001']];
         yield 'payTo without 0x' => [['payTo' => '000000000000000000000000000000000000dEaD']];
         yield 'payTo zero-padded' => [['payTo' => '0x00000000000000000000000000000000000000dEaD']];
+        yield 'payTo with a prefix' => [['payTo' => 'x0x000000000000000000000000000000000000dEaD']];
         yield 'payTo as array' => [['payTo' => ['0x000000000000000000000000000000000000dEaD']]];
         yield 'beyond uint256' => [['amount' => str_repeat('9', 79)]];
     }
@@ -87,5 +88,17 @@ final class BudgetTest extends TestCase
         $none = self::withUnsettled(null, $now);
         $none->reclaim();
         self::assertSame('10000', $none->spent('eip155:84532'));
+    }
+
+    public function testReclaimLooksAtEveryEntry(): void
+    {
+        $now = 2000;
+        $budget = new Budget(['eip155:84532' => '50000'], fn(string $n, string $from) => $from === '0xaaa', function () use (&$now) { return $now; });
+        foreach (['0xaaa' => '1000', '0xbbb' => '1000', '0xccc' => '5000'] as $from => $validBefore) {
+            $budget->spend(self::offer());
+            $budget->unsettled(self::offer(), ['payload' => ['authorization' => ['from' => $from, 'nonce' => '0x01', 'validBefore' => $validBefore]]]);
+        }
+        $budget->reclaim();
+        self::assertSame('20000', $budget->spent('eip155:84532'), 'used, freed, still valid');
     }
 }

@@ -19,7 +19,7 @@ final class Settlement {
   public static function key(array $payment): string {
     $auth = $payment['payload']['authorization'] ?? NULL;
     $id = is_array($auth)
-      ? [$payment['accepted']['network'] ?? '', strtolower((string) ($auth['from'] ?? '')), (string) ($auth['nonce'] ?? '')]
+      ? [$payment['accepted']['network'] ?? '', strtolower((string) ($auth['from'] ?? '')), strtolower((string) ($auth['nonce'] ?? ''))]
       : $payment['payload'] ?? NULL;
     return hash('sha256', json_encode($id, JSON_THROW_ON_ERROR));
   }

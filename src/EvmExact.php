@@ -37,8 +37,10 @@ final class EvmExact implements Scheme {
     // Reason codes from the x402 v2 spec §9; clients match on them.
     return match (TRUE) {
       !is_array($auth) || !is_string($signature) || !is_array($accepted) => 'invalid_payload',
-      // Typed before use: an array here would reach the EIP-712 encoder.
-      count(array_filter(['from', 'to', 'value', 'validAfter', 'validBefore', 'nonce'], fn($k) => !is_string($auth[$k] ?? NULL))) > 0 => 'invalid_payload',
+      // One spelling per value: the encoder reads "0xAB", "0xab" and "ab" as
+      // the same bytes, so a looser format would let one signature claim
+      // several deliveries (Settlement::key) or reach the encoder malformed.
+      !self::canonical($auth, $signature) => 'invalid_payload',
       ($payment['x402Version'] ?? NULL) !== 2 => 'invalid_x402_version',
       ($accepted['scheme'] ?? NULL) !== 'exact' => 'invalid_scheme',
       ($accepted['network'] ?? NULL) !== $req['network'] => 'invalid_network',
@@ -57,6 +59,16 @@ final class EvmExact implements Scheme {
       strcasecmp((string) Signer::recover(Authorization::digest($req, $auth), $signature), (string) ($auth['from'] ?? '')) !== 0 => 'invalid_exact_evm_payload_signature',
       default => NULL,
     };
+  }
+
+  private static function canonical(array $auth, string $signature): bool {
+    $formats = ['from' => '/^0x[0-9a-fA-F]{40}$/', 'to' => '/^0x[0-9a-fA-F]{40}$/', 'nonce' => '/^0x[0-9a-fA-F]{64}$/', 'value' => '/^(0|[1-9][0-9]{0,77})$/', 'validAfter' => '/^(0|[1-9][0-9]{0,18})$/', 'validBefore' => '/^(0|[1-9][0-9]{0,18})$/'];
+    foreach ($formats as $key => $format) {
+      if (!is_string($auth[$key] ?? NULL) || !preg_match($format, $auth[$key])) {
+        return FALSE;
+      }
+    }
+    return (bool) preg_match('/^0x[0-9a-fA-F]{130}$/', $signature);
   }
 
   public function payer(array $payment): ?string {

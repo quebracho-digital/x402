@@ -16,7 +16,7 @@ final class Transfer {
   /**
    * The raw transaction, 0x-hex, ready for eth_sendRawTransaction.
    *
-   * @param \Drupal\x402_pay\Signer $from
+   * @param \Quebracho\X402\Signer $from
    *   The sender's key: it pays the gas.
    * @param array $tx
    *   chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gas (integers or

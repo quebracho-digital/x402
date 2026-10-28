@@ -103,5 +103,8 @@ final class X402MiddlewareTest extends TestCase
             ->process($this->paidRequest(), $this->handler());
         self::assertSame(402, $response->getStatusCode());
         self::assertStringNotContainsString('paid content', (string) $response->getBody());
+        $receipt = PaymentHeaders::decode($response->getHeaderLine(PaymentHeaders::RESPONSE));
+        self::assertFalse($receipt['success']);
+        self::assertSame('insufficient_funds', $receipt['errorReason']);
     }
 }

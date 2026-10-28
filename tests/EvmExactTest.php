@@ -7,6 +7,7 @@ namespace Quebracho\X402\Tests;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Quebracho\X402\EvmExact;
+use Quebracho\X402\Settlement;
 use Quebracho\X402\Networks;
 use Quebracho\X402\Signer;
 
@@ -40,6 +41,10 @@ final class EvmExactTest extends TestCase
         yield 'array nonce' => [fn(array $p) => ['payload' => ['authorization' => ['nonce' => ['x']]]], 'invalid_payload'];
         yield 'echoed payTo' => [fn(array $p) => ['accepted' => ['payTo' => '0x0000000000000000000000000000000000000001']], 'invalid_payload'];
         yield 'version' => [fn(array $p) => ['x402Version' => 1], 'invalid_x402_version'];
+        yield 'nonce without 0x' => [fn(array $p) => ['payload' => ['authorization' => ['nonce' => substr($p['payload']['authorization']['nonce'], 2)]]], 'invalid_payload'];
+        yield 'nonce not hex' => [fn(array $p) => ['payload' => ['authorization' => ['nonce' => 'zz']]], 'invalid_payload'];
+        yield 'validAfter not decimal' => [fn(array $p) => ['payload' => ['authorization' => ['validAfter' => '0abc']]], 'invalid_payload'];
+        yield 'value with a leading zero' => [fn(array $p) => ['payload' => ['authorization' => ['value' => '010000']]], 'invalid_payload'];
         yield 'garbage' => [fn(array $p) => ['payload' => ['signature' => 42]], 'invalid_payload'];
     }
 
@@ -84,5 +89,14 @@ final class EvmExactTest extends TestCase
         $payment = self::payment();
         $payment['payload']['authorization']['validBefore'] = '99999999999';
         self::assertSame('invalid_exact_evm_payload_authorization_valid_before', (new EvmExact(clock: fn() => self::NOW))->verify($payment, self::req()));
+    }
+
+    public function testOneSignatureIsOneClaimHoweverTheNonceIsSpelled(): void
+    {
+        $payment = self::payment();
+        $upper = $payment;
+        $upper['payload']['authorization']['nonce'] = '0x'.strtoupper(substr($payment['payload']['authorization']['nonce'], 2));
+        self::assertNull((new EvmExact(clock: fn() => self::NOW))->verify($upper, self::req()), 'same bytes, same signature');
+        self::assertSame(Settlement::key($payment), Settlement::key($upper));
     }
 }

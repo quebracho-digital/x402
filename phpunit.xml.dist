@@ -1,0 +1,2 @@
+<?xml version="1.0"?>
+<phpunit bootstrap="vendor/autoload.php"><testsuites><testsuite name="x402"><directory>tests</directory></testsuite></testsuites><source><include><directory>src</directory></include></source></phpunit>
