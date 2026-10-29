@@ -33,6 +33,25 @@ Unpaid → `402` with `PAYMENT-REQUIRED`. Paid → verify offline, run the
 handler, settle only on 2xx, answer with `PAYMENT-RESPONSE`. Without `$settle`
 (a facilitator callback) it runs in mock mode: real verification, no settle.
 
+### Facilitators
+
+`$settle = fn ($payment, $req) => $facilitator->settle($payment, $req);` with
+any `Facilitator` (all PSR-18 + PSR-17):
+
+- `new HttpFacilitator($http, $psr17, $psr17, 'https://x402.org/facilitator')`:
+  any x402 facilitator by URL (`/verify`, `/settle`, `/supported`, `feePayer()`
+  for Solana). A settle counts only when consistent: 2xx, `success: true`, a
+  transaction, our network, the payer who signed. Verified on Base Sepolia.
+- Circle: `HttpFacilitator::CIRCLE` with an API key (`$bearer`), or keyless
+  with the payTo key (`$seller` signs the seller proof). A pending settle is
+  polled at `/status`.
+- `new ChainFacilitator(new Rpc(...), $gasWallet, 'eip155:5042002', $lock)`:
+  no third party; simulates with `eth_call`, sends `transferWithAuthorization`
+  from a gas wallet, waits for the receipt (`settlement_pending` keeps the hash).
+
+Configure the PSR-18 client not to follow redirects, so the signed payment
+reaches only the facilitator you named.
+
 ### MCP
 
 For an MCP server over Streamable HTTP, `X402McpMiddleware` follows the
