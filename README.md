@@ -158,6 +158,9 @@ instruction, compute caps of the spec, the buyer's signature. Smart wallets
 and lookup tables are refused. `unsignedTransaction()` hands the transaction
 to a browser wallet. The offer needs `extra.feePayer` (`HttpFacilitator::feePayer`).
 `NearExact` (`near:testnet`) is experimental, see [docs/near.md](docs/near.md).
+A NEAR seller that screens payers passes `keyOwner: NearExact::keyOwner($rpc)`
+(the node's `view_access_key`): without it the payer is unproven and screening
+rejects it.
 
 ## Hardening
 

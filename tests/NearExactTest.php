@@ -263,4 +263,28 @@ final class NearExactTest extends TestCase
         self::assertNull($foreign->payer(self::payment()));
         self::assertNull($down->payer(self::payment()));
     }
+
+    public function testKeyOwnerAsksTheNodeForAFullAccessKey(): void
+    {
+        $f = new \Nyholm\Psr7\Factory\Psr17Factory();
+        $sent = [];
+        $node = function (array $result) use (&$sent, $f) { return new \Quebracho\X402\Rpc(new class($result, $sent) implements \Psr\Http\Client\ClientInterface {
+            public function __construct(private array $result, private array &$sent)
+            {
+            }
+
+            public function sendRequest(\Psr\Http\Message\RequestInterface $request): \Psr\Http\Message\ResponseInterface
+            {
+                $this->sent[] = json_decode((string) $request->getBody(), true);
+
+                return new \Nyholm\Psr7\Response(200, [], json_encode(['result' => $this->result]));
+            }
+        }, $f, $f, 'https://rpc.testnet.near.org'); };
+        $key = str_repeat("\1", 32);
+        $this->assertTrue(NearExact::keyOwner($node(['nonce' => 1, 'permission' => 'FullAccess']))('buyer.testnet', $key));
+        $this->assertSame(['request_type' => 'view_access_key', 'finality' => 'final', 'account_id' => 'buyer.testnet', 'public_key' => 'ed25519:'.\Quebracho\X402\Solana::encode($key)], $sent[0]['params']);
+        $this->assertFalse(NearExact::keyOwner($node(['permission' => ['FunctionCall' => ['receiver_id' => 'x']]]))('buyer.testnet', $key));
+        $this->assertFalse(NearExact::keyOwner($node(['error' => 'access key does not exist']))('buyer.testnet', $key));
+        $this->assertSame(123, NearExact::blockHeight($node(['header' => ['height' => 123]]))());
+    }
 }

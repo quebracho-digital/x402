@@ -41,6 +41,32 @@ final class NearExact implements Scheme
     ) {
     }
 
+    /**
+     * The $keyOwner a seller passes: a full-access key of that account, by
+     * the node's view_access_key. A function-call key is not the account.
+     */
+    public static function keyOwner(Rpc $rpc): \Closure
+    {
+        return static function (string $accountId, string $publicKey) use ($rpc): bool {
+            $out = $rpc('query', ['request_type' => 'view_access_key', 'finality' => 'final', 'account_id' => $accountId, 'public_key' => 'ed25519:'.Solana::encode($publicKey)]);
+
+            // An unknown key answers {error: …} inside the result.
+            return is_array($out) && 'FullAccess' === ($out['permission'] ?? null);
+        };
+    }
+
+    /**
+     * The $clock: the latest final block height.
+     */
+    public static function blockHeight(Rpc $rpc): \Closure
+    {
+        return static function () use ($rpc): int {
+            $height = $rpc('block', ['finality' => 'final'])['header']['height'] ?? null;
+
+            return is_int($height) ? $height : throw new \RuntimeException('block: no height');
+        };
+    }
+
     public function supports(string $network): bool
     {
         return self::TESTNET_NETWORK === $network;
