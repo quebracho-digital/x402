@@ -16,7 +16,9 @@ use Psr\Http\Message\StreamFactoryInterface;
  *
  * A settle counts only when it is consistent: a 2xx, success === true, a
  * transaction (0x+64 hex on EVM), our network and, when named, the payer who
- * signed. A pending settle with a paymentId (Circle) is polled at /status.
+ * signed (a facilitator that names no payer is not checked on it). A pending
+ * settle with a paymentId (Circle) is polled at /status; still pending, it
+ * comes back as settlement_pending with that paymentId.
  *
  * @see https://developers.circle.com/facilitator-service/quickstart
  */
@@ -64,6 +66,10 @@ final class HttpFacilitator implements Facilitator
             } elseif ('failed' === ($status['status'] ?? null)) {
                 return ['success' => false, 'errorReason' => is_string($status['reason'] ?? null) ? $status['reason'] : 'settlement_failed', 'transaction' => '', 'network' => $req['network']];
             }
+        }
+        if (true !== ($out['success'] ?? null) && is_string($id)) {
+            // Still pending after polling: its id is what reconciles it.
+            return ['success' => false, 'errorReason' => 'settlement_pending', 'transaction' => is_string($out['transaction'] ?? null) ? $out['transaction'] : '', 'network' => $req['network'], 'paymentId' => $id];
         }
         if (true !== ($out['success'] ?? null)) {
             return $out;

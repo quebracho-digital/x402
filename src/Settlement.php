@@ -39,6 +39,9 @@ final class Settlement
         }
         try {
             $receipt = $settle($payment, $req);
+        } catch (FacilitatorException) {
+            // Not the buyer's fault: the HTTP transport answers 502, the claim is freed.
+            $receipt = ['success' => false, 'errorReason' => Sale::UNAVAILABLE];
         } catch (\Throwable) {
             $receipt = null;
         }
@@ -49,6 +52,8 @@ final class Settlement
         // Kept so a broadcast that has not confirmed yet (settlement_pending) can be reconciled.
         $tx = is_array($receipt) && is_string($receipt['transaction'] ?? null) ? $receipt['transaction'] : '';
 
-        return ['success' => false, 'errorReason' => $reason, 'transaction' => $tx, 'network' => $req['network']];
+        $failed = ['success' => false, 'errorReason' => $reason, 'transaction' => $tx, 'network' => $req['network']];
+
+        return is_array($receipt) && is_string($receipt['paymentId'] ?? null) ? $failed + ['paymentId' => $receipt['paymentId']] : $failed;
     }
 }

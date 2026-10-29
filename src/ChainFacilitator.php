@@ -27,18 +27,26 @@ final class ChainFacilitator implements Facilitator
     /**
      * @param string    $network
      *                             The CAIP-2 network $rpc talks to; other networks are refused
-     * @param ?\Closure $serialize
+     * @param \Closure  $serialize
      *                             fn(string $name, callable $run): mixed, runs $run holding a lock named
-     *                             $name: one sender, one nonce at a time. NULL is fine for one process.
+     *                             $name across every process (flock, DB, Redis): one sender, one nonce
+     *                             at a time, or parallel settles replace each other's transactions
+     * @param ?string   $maxGasCost
+     *                             Wei: no settle whose gas limit × max fee costs more (a buyer can make
+     *                             our transaction revert and burn gas); NULL is no cap
      */
     public function __construct(
         private readonly Rpc $rpc,
         private readonly Signer $gas,
         private readonly string $network,
-        private readonly ?\Closure $serialize = null,
+        private readonly \Closure $serialize,
+        private readonly ?string $maxGasCost = null,
         private readonly int $pollDelayMs = 500,
         private readonly int $pollAttempts = 40,
     ) {
+        if (!preg_match('/^eip155:[1-9]\d*$/', $network)) {
+            throw new \InvalidArgumentException("Not an EVM network: $network");
+        }
     }
 
     public function verify(array $payment, array $req): array
@@ -69,31 +77,47 @@ final class ChainFacilitator implements Facilitator
         }
         $rpc = $this->rpc;
         $call = ['from' => $this->gas->address(), 'to' => $req['asset'], 'data' => self::calldata($payment)];
-        $send = function () use ($rpc, $call, $req): string {
-            $gasPrice = Rpc::number($rpc('eth_gasPrice', []));
+        // Holding the lock: what to send, then sending it. The hash is known
+        // before sending, so a send that times out or errors after
+        // broadcasting still leaves a transaction to reconcile.
+        $send = function () use ($rpc, $call, $req): array {
+            $base = Rpc::number($rpc('eth_gasPrice', []));
+            $tip = Rpc::number($rpc('eth_maxPriorityFeePerGas', []));
+            // Twice today's price, so a busier block still takes it.
+            $maxFee = gmp_mul($base, 2);
             // Its estimate and a fifth more. A revert here is a bad payment.
             $limit = gmp_div_q(gmp_mul(Rpc::number($rpc('eth_estimateGas', [$call])), 12), 10);
+            if (null !== $this->maxGasCost && gmp_cmp(gmp_mul($limit, $maxFee), gmp_init($this->maxGasCost, 10)) > 0) {
+                throw new \RuntimeException('gas_too_expensive');
+            }
             $raw = Transfer::sign($this->gas, [
                 'chainId' => explode(':', $this->network)[1],
                 'nonce' => gmp_strval(Rpc::number($rpc('eth_getTransactionCount', [$this->gas->address(), 'pending']))),
-                'maxPriorityFeePerGas' => gmp_strval($gasPrice),
-                // Twice today's price, so a busier block still takes it.
-                'maxFeePerGas' => gmp_strval(gmp_mul($gasPrice, 2)),
+                'maxPriorityFeePerGas' => gmp_strval(gmp_cmp($tip, $maxFee) > 0 ? $maxFee : $tip),
+                'maxFeePerGas' => gmp_strval($maxFee),
                 'gas' => gmp_strval($limit),
                 'token' => $req['asset'],
                 'data' => $call['data'],
             ]);
-            $tx = $rpc('eth_sendRawTransaction', [$raw]);
+            $hash = Eip712::keccak(Eip712::raw($raw));
+            try {
+                $rpc('eth_sendRawTransaction', [$raw]);
+            } catch (\RuntimeException) {
+                // Maybe broadcast ("already known", a timeout): pending, never a refusal.
+                return [$hash, false];
+            }
 
-            return is_string($tx) ? $tx : throw new \RuntimeException('eth_sendRawTransaction: no hash');
+            return [$hash, true];
         };
         try {
             // ponytail: one lock per network serializes its sales; rotate gas wallets if that ever limits throughput.
-            $result['transaction'] = null === $this->serialize ? $send() : ($this->serialize)("x402.chain.$this->network", $send);
-        } catch (FacilitatorException $e) {
-            throw $e;
+            [$result['transaction'], $sent] = ($this->serialize)("x402.chain.$this->network", $send);
         } catch (\RuntimeException $e) {
+            // Before anything was signed: nothing left the building.
             return ['errorReason' => $e->getMessage()] + $result;
+        }
+        if (!$sent) {
+            return ['errorReason' => 'settlement_pending'] + $result;
         }
 
         for ($i = 0; $i < $this->pollAttempts; ++$i) {

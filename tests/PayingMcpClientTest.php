@@ -161,6 +161,9 @@ final class PayingMcpClientTest extends TestCase
 
             public function dispatch(object $event): object
             {
+                if (!$event instanceof AddressCheck) {
+                    return $event;
+                }
                 $this->seen[] = [$event->role, $event->address];
                 if (0 === strcasecmp($event->address, $this->address)) {
                     $event->reject('address_denied');
@@ -200,6 +203,9 @@ final class PayingMcpClientTest extends TestCase
         $throwing = new class implements EventDispatcherInterface {
             public function dispatch(object $event): object
             {
+                if (!$event instanceof AddressCheck) {
+                    return $event;
+                }
                 throw new \RuntimeException('screening API down');
             }
         };
@@ -219,6 +225,9 @@ final class PayingMcpClientTest extends TestCase
 
             public function dispatch(object $event): object
             {
+                if (!$event instanceof AddressCheck) {
+                    return $event;
+                }
                 // Started now, answered when the seller asks before settling.
                 $event->defer(function () {
                     ++$this->lookups;

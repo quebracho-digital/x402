@@ -39,7 +39,15 @@ final class X402McpMiddleware implements MiddlewareInterface
      *                                           fn(array $payment, array $req): array — a facilitator's settle result.
      *                                           NULL is mock mode: signatures are checked for real, nothing moves.
      * @param ?EventDispatcherInterface $events
-     *                                           Dispatches an AddressCheck on the payer; NULL screens nothing
+     *                                           Dispatches an AddressCheck on the payer and a PaymentOutcome; NULL: neither
+     * @param ?\Closure                 $verify
+     *                                           fn(array $payment, array $req): ?string — online check before the claim,
+     *                                           as in X402Middleware
+     * @param ?\Closure                 $release
+     *                                           fn(string $key): void — frees a claim when nothing was charged
+     * @param ?\Closure                 $resource
+     *                                           fn(array $params): array — the PaymentRequired's resource (url,
+     *                                           description, mimeType); default: mcp://tool/<name>
      */
     public function __construct(
         private readonly array $schemes,
@@ -49,6 +57,9 @@ final class X402McpMiddleware implements MiddlewareInterface
         private readonly StreamFactoryInterface $streams,
         private readonly ?\Closure $settle = null,
         private readonly ?EventDispatcherInterface $events = null,
+        private readonly ?\Closure $verify = null,
+        private readonly ?\Closure $release = null,
+        private readonly ?\Closure $resource = null,
     ) {
     }
 
@@ -83,7 +94,7 @@ final class X402McpMiddleware implements MiddlewareInterface
             return $this->responses->createResponse(202);
         }
         $id = $message['id'];
-        $resource = ['url' => 'mcp://tool/'.$message['params']['name']];
+        $resource = null !== $this->resource ? ($this->resource)($message['params']) : ['url' => 'mcp://tool/'.$message['params']['name']];
 
         $payment = $message['params']['_meta'][self::PAYMENT] ?? null;
         if (!is_array($payment)) {
@@ -95,50 +106,62 @@ final class X402McpMiddleware implements MiddlewareInterface
         if (false === $req) {
             return $this->required($id, $accepts, $resource, 'invalid_payment_requirements');
         }
-        $scheme = current(array_filter($this->schemes, fn (Scheme $s) => $s->supports($req['network'])))
-          ?: throw new \LogicException("No scheme verifies {$req['network']}.");
+        $sale = new Sale($this->schemes, $this->claim, $this->settle, $this->events, $this->verify, $this->release, $payment, $req);
         // ponytail: verify runs before the MCP session check and costs an
         // ecrecover; rate-limit the route where it is deployed.
-        $reason = $scheme->verify($payment, $req);
-        // Screened once the signature proved who pays, before anything is spent;
-        // a slow lookup started here is read before settling.
-        $check = null === $reason ? AddressCheck::start($this->events, AddressCheck::PAYER, $scheme->payer($payment), $req) : null;
-        $reason ??= $check?->reason();
+        $reason = $sale->admit();
         if (null !== $reason) {
             return $this->required($id, $accepts, $resource, $reason);
         }
-        // Spent before it runs: N concurrent copies get one delivery.
-        if (!($this->claim)(Settlement::key($payment))) {
-            return $this->required($id, $accepts, $resource, 'duplicate_settlement');
+
+        $receipt = null;
+        if ($sale->upfront()) {
+            // Money first; once it moved, the receipt goes with whatever the tool answers.
+            $receipt = $sale->settle();
+            if (true !== $receipt['success']) {
+                return $this->required($id, $accepts, $resource, $receipt['errorReason']);
+            }
         }
 
         $response = $handler->handle($request);
         if (200 !== $response->getStatusCode()) {
             // The transport refused it (session, protocol): nothing ran.
+            if (null === $receipt) {
+                $sale->abandon($response->getStatusCode());
+            }
+
             return $response;
         }
         $delivered = null;
-        $settled = $this->rewrite($response, $id, function (array $out) use ($payment, $req, $check, &$delivered): array {
+        $settled = $this->rewrite($response, $id, function (array $out) use ($sale, $receipt, &$delivered): array {
             // A JSON-RPC error or a failed tool delivered nothing: nothing charged.
             $delivered = isset($out['result']) && empty($out['result']['isError']);
-            if (!$delivered) {
-                return $out;
+            if (null === $receipt) {
+                if (!$delivered) {
+                    $sale->abandon(200);
+
+                    return $out;
+                }
+                $receipt = $sale->settle(200);
+                if (true !== $receipt['success']) {
+                    return ['receipt' => $receipt];
+                }
             }
-            $late = $check?->verdict();
-            $receipt = null === $late
-              ? Settlement::run($this->settle, $payment, $req)
-              // Ran but not paid for: withheld, as when settlement fails.
-              : ['success' => false, 'errorReason' => $late];
-            if (true !== $receipt['success']) {
-                return ['receipt' => $receipt];
+            if (isset($out['result'])) {
+                $out['result']['_meta'][self::PAYMENT_RESPONSE] = $receipt;
             }
-            $out['result']['_meta'][self::PAYMENT_RESPONSE] = $receipt;
 
             return $out;
         });
         if (null === $delivered) {
+            if (null !== $receipt) {
+                // Paid upfront: the answer goes as it is.
+                return $response;
+            }
             // ponytail: our answer is not in the body (a live stream, e.g. a tool
             // that samples); withheld rather than given away unpaid.
+            $sale->abandon(200);
+
             return $this->required($id, $accepts, $resource, 'unexpected_settle_error');
         }
         if (isset($settled['receipt'])) {

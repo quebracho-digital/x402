@@ -33,6 +33,20 @@ Unpaid → `402` with `PAYMENT-REQUIRED`. Paid → verify offline, run the
 handler, settle only on 2xx, answer with `PAYMENT-RESPONSE`. Without `$settle`
 (a facilitator callback) it runs in mock mode: real verification, no settle.
 
+Optional, by name, on both middlewares:
+
+- `verify:` `fn($payment, $req): ?string`, an online check (`$facilitator->verify`)
+  before the claim: an empty wallet runs nothing and takes no claim.
+- `release:` `$claims->release(...)`: a payment that charged nothing (handler
+  failed, settle failed with no transaction) is good again. A pending settle
+  keeps its claim. `FileClaims::prune($seconds)` clears old claims.
+- `resource:` the 402's `resource` (canonical URL, description, mimeType).
+- `extra.paymentFlow = 'upfront'` in an offer settles before the handler runs;
+  once money moved, the receipt goes with whatever the handler answers.
+- A `FacilitatorException` answers 502 on HTTP (`facilitator_unavailable` on MCP).
+- `$events` also receives a `PaymentOutcome` (settled, not_settled, failed,
+  rejected) per paid request; a listener that throws cannot undo a sale.
+
 ### Facilitators
 
 `$settle = fn ($payment, $req) => $facilitator->settle($payment, $req);` with

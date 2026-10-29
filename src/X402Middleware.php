@@ -34,8 +34,21 @@ final class X402Middleware implements MiddlewareInterface
      *                                           fn(array $payment, array $req): array — a facilitator's settle result
      *                                           (success, transaction, network, payer, errorReason). NULL is mock
      *                                           mode: signatures are checked for real, nothing moves on chain.
+     *                                           A FacilitatorException answers 502: not the buyer's fault.
      * @param ?EventDispatcherInterface $events
-     *                                           Dispatches an AddressCheck on the payer; NULL screens nothing
+     *                                           Dispatches an AddressCheck on the payer and a PaymentOutcome; NULL: neither
+     * @param ?\Closure                 $verify
+     *                                           fn(array $payment, array $req): ?string — an online check (facilitator
+     *                                           /verify, eth_call) after the offline one, before the claim: a reason,
+     *                                           or NULL when good. NULL skips it: the handler may run for a payment
+     *                                           settle then refuses (its output withheld).
+     * @param ?\Closure                 $release
+     *                                           fn(string $key): void — frees a claim when nothing was charged (the
+     *                                           handler failed, or settle failed with no transaction), so the buyer's
+     *                                           signature is good again. NULL keeps every claim.
+     * @param ?\Closure                 $resource
+     *                                           fn(ServerRequestInterface): array — the 402's resource (url,
+     *                                           description, mimeType); default: the request URL
      */
     public function __construct(
         private readonly array $schemes,
@@ -45,6 +58,9 @@ final class X402Middleware implements MiddlewareInterface
         private readonly StreamFactoryInterface $streams,
         private readonly ?\Closure $settle = null,
         private readonly ?EventDispatcherInterface $events = null,
+        private readonly ?\Closure $verify = null,
+        private readonly ?\Closure $release = null,
+        private readonly ?\Closure $resource = null,
     ) {
     }
 
@@ -54,7 +70,7 @@ final class X402Middleware implements MiddlewareInterface
         if (null === $accepts) {
             return $handler->handle($request);
         }
-        $resource = ['url' => (string) $request->getUri()];
+        $resource = null !== $this->resource ? ($this->resource)($request) : ['url' => (string) $request->getUri()];
 
         $header = $request->getHeaderLine(PaymentHeaders::SIGNATURE);
         if ('' === $header) {
@@ -72,37 +88,50 @@ final class X402Middleware implements MiddlewareInterface
         if (false === $req) {
             return $this->required($accepts, $resource, 'The payment matches none of the accepted offers');
         }
-        $scheme = current(array_filter($this->schemes, fn (Scheme $s) => $s->supports($req['network'])))
-          ?: throw new \LogicException("No scheme verifies {$req['network']}.");
-        $reason = $scheme->verify($payment, $req);
-        // Screened once the signature proved who pays, before anything is spent;
-        // a slow lookup started here is read before settling.
-        $check = null === $reason ? AddressCheck::start($this->events, AddressCheck::PAYER, $scheme->payer($payment), $req) : null;
-        $reason ??= $check?->reason();
+        $sale = new Sale($this->schemes, $this->claim, $this->settle, $this->events, $this->verify, $this->release, $payment, $req);
+        $reason = $sale->admit();
+        if (Sale::UNAVAILABLE === $reason) {
+            return $this->json(502, ['error' => $reason]);
+        }
         if (null !== $reason) {
             return $this->required($accepts, $resource, $reason);
         }
-        // Spent before it runs: N concurrent copies get one delivery.
-        if (!($this->claim)(Settlement::key($payment))) {
-            return $this->required($accepts, $resource, 'duplicate_settlement');
+
+        if ($sale->upfront()) {
+            // Money first; once it moved, the receipt goes with whatever the handler answers.
+            $receipt = $sale->settle();
+            if (true !== $receipt['success']) {
+                return $this->failed($accepts, $resource, $receipt);
+            }
+
+            return $handler->handle($request)->withHeader(PaymentHeaders::RESPONSE, PaymentHeaders::encode($receipt));
         }
 
         $response = $handler->handle($request);
-        if ($response->getStatusCode() < 200 || $response->getStatusCode() >= 300) {
+        $status = $response->getStatusCode();
+        if ($status < 200 || $status >= 300) {
             // Nothing delivered, nothing charged.
+            $sale->abandon($status);
+
             return $response;
         }
-        $reason = $check?->verdict();
-        if (null !== $reason) {
-            // Ran but not paid for: withheld, as when settlement fails.
-            return $this->required($accepts, $resource, $reason);
-        }
-        $receipt = Settlement::run($this->settle, $payment, $req);
+        $receipt = $sale->settle($status);
         if (true !== $receipt['success']) {
-            // The spec (transports-v2/http.md) sends the failed SettlementResponse too.
-            return $this->required($accepts, $resource, $receipt['errorReason'])
-              ->withHeader(PaymentHeaders::RESPONSE, PaymentHeaders::encode($receipt));
+            return $this->failed($accepts, $resource, $receipt);
         }
+
+        return $response->withHeader(PaymentHeaders::RESPONSE, PaymentHeaders::encode($receipt));
+    }
+
+    /**
+     * Settle failed: a 402 with the failed SettlementResponse, as
+     * transports-v2/http.md asks; 502 when the facilitator was unreachable.
+     */
+    private function failed(array $accepts, array $resource, array $receipt): ResponseInterface
+    {
+        $response = Sale::UNAVAILABLE === $receipt['errorReason']
+          ? $this->json(502, ['error' => Sale::UNAVAILABLE])
+          : $this->required($accepts, $resource, $receipt['errorReason']);
 
         return $response->withHeader(PaymentHeaders::RESPONSE, PaymentHeaders::encode($receipt));
     }

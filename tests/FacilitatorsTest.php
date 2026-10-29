@@ -71,7 +71,7 @@ final class FacilitatorsTest extends TestCase
             return new Response(200, [], json_encode($a instanceof \RuntimeException ? ['error' => ['message' => $a->getMessage()]] : ['result' => $a]));
         });
 
-        return new ChainFacilitator(new Rpc($client, $f, $f, 'https://rpc.example'), new Signer('0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a'), self::NETWORK, null, 0, 3);
+        return new ChainFacilitator(new Rpc($client, $f, $f, 'https://rpc.example'), new Signer('0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a'), self::NETWORK, fn (string $name, callable $run) => $run(), null, 0, 3);
     }
 
     private function payment(array $auth = []): array
@@ -102,19 +102,21 @@ final class FacilitatorsTest extends TestCase
 
     public function testChainSettleSendsAndWaitsForTheReceipt(): void
     {
-        $result = $this->chain(['eth_gasPrice' => '0x5d21dba00', 'eth_estimateGas' => '0xea60', 'eth_getTransactionCount' => '0x7', 'eth_sendRawTransaction' => self::TX, 'eth_getTransactionReceipt' => ['status' => '0x1']])
+        $result = $this->chain(['eth_gasPrice' => '0x5d21dba00', 'eth_maxPriorityFeePerGas' => '0x1', 'eth_estimateGas' => '0xea60', 'eth_getTransactionCount' => '0x7', 'eth_sendRawTransaction' => self::TX, 'eth_getTransactionReceipt' => ['status' => '0x1']])
             ->settle($this->payment(), $this->req());
 
         $this->assertTrue($result['success']);
-        $this->assertSame(self::TX, $result['transaction']);
+        // The hash of what was signed, not whatever the node said.
+        $raw = json_decode((string) $this->sent[4]->getBody(), true)['params'][0];
+        $this->assertSame(Eip712::keccak(Eip712::raw($raw)), $result['transaction']);
         $methods = array_map(fn ($r) => json_decode((string) $r->getBody(), true)['method'], $this->sent);
-        $this->assertSame(['eth_gasPrice', 'eth_estimateGas', 'eth_getTransactionCount', 'eth_sendRawTransaction', 'eth_getTransactionReceipt'], $methods);
+        $this->assertSame(['eth_gasPrice', 'eth_maxPriorityFeePerGas', 'eth_estimateGas', 'eth_getTransactionCount', 'eth_sendRawTransaction', 'eth_getTransactionReceipt'], $methods);
     }
 
     public function testChainRefusesWithoutSpendingGas(): void
     {
         $cases = [
-            'revert' => [$this->payment(), $this->req(), ['eth_gasPrice' => '0x1', 'eth_estimateGas' => new \RuntimeException('execution reverted: authorization is used')]],
+            'revert' => [$this->payment(), $this->req(), ['eth_gasPrice' => '0x1', 'eth_maxPriorityFeePerGas' => '0x1', 'eth_estimateGas' => new \RuntimeException('execution reverted: authorization is used')]],
             'other seller' => [$this->payment(['to' => '0x'.str_repeat('1', 40)]), $this->req(), []],
             'other amount' => [$this->payment(['value' => '1']), $this->req(), []],
             'expired' => [$this->payment(['validBefore' => '1']), $this->req(), []],
@@ -130,11 +132,27 @@ final class FacilitatorsTest extends TestCase
 
     public function testChainKeepsTheHashWhenNotMinedOrReverted(): void
     {
-        $base = ['eth_gasPrice' => '0x1', 'eth_estimateGas' => '0x1', 'eth_getTransactionCount' => '0x0', 'eth_sendRawTransaction' => self::TX];
+        $base = ['eth_gasPrice' => '0x1', 'eth_maxPriorityFeePerGas' => '0x1', 'eth_estimateGas' => '0x1', 'eth_getTransactionCount' => '0x0', 'eth_sendRawTransaction' => self::TX];
         $pending = $this->chain($base + ['eth_getTransactionReceipt' => null])->settle($this->payment(), $this->req());
-        $this->assertSame(['settlement_pending', self::TX], [$pending['errorReason'], $pending['transaction']]);
+        $this->assertSame('settlement_pending', $pending['errorReason']);
+        $this->assertMatchesRegularExpression('/^0x[0-9a-f]{64}$/', $pending['transaction']);
+        // A send that errors after signing may have been broadcast: pending, with its hash.
+        $lost = $this->chain(['eth_sendRawTransaction' => new \RuntimeException('already known')] + $base)->settle($this->payment(), $this->req());
+        $this->assertSame('settlement_pending', $lost['errorReason']);
+        $this->assertMatchesRegularExpression('/^0x[0-9a-f]{64}$/', $lost['transaction']);
         $reverted = $this->chain($base + ['eth_getTransactionReceipt' => ['status' => '0x0']])->settle($this->payment(), $this->req());
         $this->assertSame(['transaction_reverted', false], [$reverted['errorReason'], $reverted['success']]);
+    }
+
+    public function testChainGasCapSendsNothing(): void
+    {
+        $f = new Psr17Factory();
+        $answers = ['eth_gasPrice' => '0x3b9aca00', 'eth_maxPriorityFeePerGas' => '0x1', 'eth_estimateGas' => '0xea60'];
+        $client = $this->client(fn (RequestInterface $r) => new Response(200, [], json_encode(['result' => $answers[json_decode((string) $r->getBody(), true)['method']] ?? null])));
+        $chain = new ChainFacilitator(new Rpc($client, $f, $f, 'https://rpc.example'), new Signer('0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a'), self::NETWORK, fn ($n, callable $run) => $run(), '1000', 0, 3);
+        $result = $chain->settle($this->payment(), $this->req());
+        $this->assertSame(['gas_too_expensive', ''], [$result['errorReason'], $result['transaction']]);
+        $this->assertCount(3, $this->sent);
     }
 
     public function testChainVerifySimulates(): void
@@ -176,6 +194,13 @@ final class FacilitatorsTest extends TestCase
 
         $this->assertTrue($result['success']);
         $this->assertSame(HttpFacilitator::CIRCLE.'/status/pay-1', (string) $this->sent[2]->getUri());
+    }
+
+    public function testStillPendingAfterPollingKeepsThePaymentId(): void
+    {
+        $pending = $this->json(200, ['success' => false, 'extensions' => ['settlement-status' => ['paymentId' => 'pay-1']]]);
+        $result = $this->http([$pending, ...array_fill(0, 5, $this->json(200, ['status' => 'pending']))], 'K')->settle($this->payment(), $this->req());
+        $this->assertSame(['settlement_pending', 'pay-1'], [$result['errorReason'], $result['paymentId']]);
     }
 
     public function testOnlyAConsistentSettleCounts(): void
