@@ -96,9 +96,13 @@ final class SolanaExactTest extends TestCase
             // The fee payer (key 0) as the transfer's authority: a drain.
             'fee payer in an instruction' => [$req, $this->forged($req, fn (string $m) => self::replaceTransferAccounts($m, [2, 4, 3, 0]))],
             'garbage' => [$req, ['x402Version' => 2, 'accepted' => $req, 'payload' => ['transaction' => base64_encode('nope')]]],
+            // The seller asked for a memo the transaction does not carry.
+            'memo missing' => [['extra' => ['memo' => 'invoice-1'] + $req['extra']] + $req, $this->forged($req, fn (string $m) => self::dropLastInstruction($m))],
+            // The destination moved to the read-only section: it would fail on chain.
+            'read-only destination' => [$req, $this->forged($req, fn (string $m) => $m[3] === "\x04" ? substr_replace($m, "\x06", 3, 1) : $m)],
         ];
         $expected = ['garbage' => 'invalid_payload'];
-        foreach (['another seller' => 'recipient_mismatch', 'less money' => 'amount_insufficient', 'another fee payer' => 'transaction_signers', 'other memo' => 'memo_mismatch', 'bad signature' => 'signature', 'fee payer in an instruction' => 'transaction_fee_payer_included_in_instruction_accounts'] as $case => $reason) {
+        foreach (['another seller' => 'recipient_mismatch', 'less money' => 'amount_insufficient', 'another fee payer' => 'transaction_signers', 'other memo' => 'memo_mismatch', 'bad signature' => 'signature', 'fee payer in an instruction' => 'transaction_fee_payer_included_in_instruction_accounts', 'memo missing' => 'memo_mismatch', 'read-only destination' => 'transaction_instructions'] as $case => $reason) {
             $expected[$case] = 'invalid_exact_svm_payload_'.$reason;
         }
         foreach ($cases as $case => [$wanted, $payment]) {
@@ -123,6 +127,15 @@ final class SolanaExactTest extends TestCase
         $this->assertTrue($budget->allows($req));
         $this->assertFalse($budget->allows(['asset' => 'So11111111111111111111111111111111111111112'] + $req));
         $this->assertFalse($budget->allows(['extra' => ['feePayer' => '0xnope']] + $req));
+    }
+
+    /** Drops the memo, the last instruction of a message we built (its count is a 1-byte shortvec). */
+    private static function dropLastInstruction(string $message): string
+    {
+        $memo = strrpos($message, "\x07\x00\x20");
+        $count = strrpos(substr($message, 0, $memo), "\x04\x06\x00\x05");
+
+        return substr_replace(substr($message, 0, $memo)."\x00", "\x03", $count, 1);
     }
 
     /** Rewrites the TransferChecked instruction's account indexes in a v0 message we built. */

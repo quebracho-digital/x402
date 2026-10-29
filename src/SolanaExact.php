@@ -11,7 +11,7 @@ namespace Quebracho\X402;
  *
  * verify() checks offline what the transaction pays and that the fee payer
  * is only the fee payer (spec §1, §2.1, standard-wallet layout of §3.1):
- * smart wallets and lookup tables are refused, being unreadable offline.
+ * smart wallets, lookup tables and token-2022 are refused.
  *
  * @see https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_svm.md
  */
@@ -20,7 +20,6 @@ final class SolanaExact implements Scheme
     // Spec §2.2.1 reference caps.
     private const MAX_COMPUTE_UNITS = 400_000;
     private const MAX_PRICE_MICROLAMPORTS = 5_000_000;
-    private const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 
     /**
      * @param ?SolanaKey $buyer
@@ -63,7 +62,7 @@ final class SolanaExact implements Scheme
     {
         $accepted = $payment['accepted'] ?? [];
         $wire = is_string($payment['payload']['transaction'] ?? null) ? base64_decode($payment['payload']['transaction'], true) : false;
-        $tx = is_string($wire) && strlen($wire) <= 1232 ? Solana::parse($wire) : null;
+        $tx = is_string($wire) ? Solana::parse($wire) : null;
         $feePayer = $req['extra']['feePayer'] ?? null;
         if (!is_array($accepted) || null === $tx) {
             return 'invalid_payload';
@@ -88,7 +87,13 @@ final class SolanaExact implements Scheme
         if (2 !== $tx['signers'] || 2 !== count($tx['signatures']) || ($keys[0] ?? null) !== $feePayer) {
             return 'invalid_exact_svm_payload_transaction_signers';
         }
+        // The fee payer writable, the rest of §3.1's layout: at most 7 instructions.
+        if ($tx['readonlySigned'] > 1 || count($tx['instructions']) > 7) {
+            return 'invalid_exact_svm_payload_transaction_instructions_length';
+        }
+        $writable = fn (int $i) => $i >= $tx['signers'] && $i < count($keys) - $tx['readonlyUnsigned'];
         $transfers = [];
+        $memos = [];
         foreach ($tx['instructions'] as $ix) {
             $program = $keys[$ix['program']] ?? null;
             foreach ($ix['accounts'] as $a) {
@@ -107,16 +112,25 @@ final class SolanaExact implements Scheme
                     "\x03" === ($data[0] ?? '') && 9 === strlen($data) => self::u64($data, 1) > self::MAX_PRICE_MICROLAMPORTS ? 'invalid_exact_svm_payload_transaction_instructions_compute_price_instruction_too_high' : null,
                     default => 'invalid_exact_svm_payload_transaction_instructions',
                 },
-                Solana::MEMO => isset($req['extra']['memo']) && $data !== $req['extra']['memo'] ? 'invalid_exact_svm_payload_memo_mismatch' : null,
-                Solana::TOKEN_PROGRAM, self::TOKEN_2022 => "\x0c" === ($data[0] ?? '') && 10 === strlen($data) && 4 === count($ix['accounts']) ? null : 'invalid_exact_svm_payload_transaction_instructions',
+                Solana::MEMO => null,
+                // ponytail: spl-token only; token-2022 mints may take a transfer fee, so
+                // the seller would get less than the amount. Add it per mint when one is sold.
+                Solana::TOKEN_PROGRAM => "\x0c" === ($data[0] ?? '') && 10 === strlen($data) && 4 === count($ix['accounts']) ? null : 'invalid_exact_svm_payload_transaction_instructions',
                 default => 'invalid_exact_svm_payload_transaction_instructions',
             };
             if (null !== $reason) {
                 return $reason;
             }
-            if (Solana::TOKEN_PROGRAM === $program || self::TOKEN_2022 === $program) {
+            if (Solana::TOKEN_PROGRAM === $program) {
                 $transfers[] = $ix + ['token' => $program];
             }
+            if (Solana::MEMO === $program) {
+                $memos[] = $data;
+            }
+        }
+        // Clients must include exactly one memo, the seller's when it set one (§3.1).
+        if (1 !== count($memos) || strlen($memos[0]) > 256 || (isset($req['extra']['memo']) && $memos[0] !== $req['extra']['memo'])) {
+            return 'invalid_exact_svm_payload_memo_mismatch';
         }
         // Exactly one transfer, ours (§1.4).
         if (1 !== count($transfers)) {
@@ -134,6 +148,8 @@ final class SolanaExact implements Scheme
             null !== $decimals && ord($transfers[0]['data'][9]) !== $decimals => 'invalid_exact_svm_payload_transaction_instructions',
             // The buyer is the second signer, the transfer's authority, and signed this message.
             1 !== $authority || $keys[$source] !== Solana::ata($keys[1], $req['asset'], $token) => 'invalid_exact_svm_payload_transaction_signers',
+            // Read-only accounts would make the transfer fail on chain, at the fee payer's cost.
+            !$writable($source) || !$writable($destination) => 'invalid_exact_svm_payload_transaction_instructions',
             !sodium_crypto_sign_verify_detached($tx['signatures'][1], $tx['message'], Solana::decode($keys[1])) => 'invalid_exact_svm_payload_signature',
             default => null,
         };
