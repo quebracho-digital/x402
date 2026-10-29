@@ -14,6 +14,7 @@ use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Quebracho\X402\Settlement;
 use Quebracho\X402\AddressCheck;
 use Quebracho\X402\Budget;
 use Quebracho\X402\EvmExact;
@@ -35,7 +36,7 @@ final class PayingMcpClientTest extends TestCase
     {
         $f = new Psr17Factory();
         $req = Networks::requirements('eip155:84532', '0.01', '0x000000000000000000000000000000000000dEaD');
-        $middleware = new X402McpMiddleware([new EvmExact()], fn (array $p) => 'wisdom' === $p['name'] ? [$req] : null, (new FileClaims(sys_get_temp_dir().'/x402-claims-'.bin2hex(random_bytes(8))))->__invoke(...), $f, $f, $settle, $events);
+        $middleware = new X402McpMiddleware([new EvmExact()], fn (array $p) => 'wisdom' === $p['name'] ? [$req] : null, (new FileClaims(sys_get_temp_dir().'/x402-claims-'.bin2hex(random_bytes(8))))->__invoke(...), $f, $f, $settle ?? Settlement::mock(), $events);
         $handler = new class($this, $f, $sse) implements RequestHandlerInterface {
             public function __construct(private PayingMcpClientTest $test, private Psr17Factory $f, private bool $sse)
             {

@@ -11,6 +11,7 @@ use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Quebracho\X402\Settlement;
 use Quebracho\X402\EvmExact;
 use Quebracho\X402\FileClaims;
 use Quebracho\X402\Networks;
@@ -27,7 +28,7 @@ final class X402MiddlewareTest extends TestCase
         $req = Networks::requirements('eip155:84532', '0.01', '0x000000000000000000000000000000000000dEaD');
         $f = new Psr17Factory();
 
-        return new X402Middleware([new EvmExact()], fn (ServerRequestInterface $r) => '/free' === $r->getUri()->getPath() ? null : [$req], (new FileClaims(sys_get_temp_dir().'/x402-claims-'.bin2hex(random_bytes(8))))->__invoke(...), $f, $f, $settle);
+        return new X402Middleware([new EvmExact()], fn (ServerRequestInterface $r) => '/free' === $r->getUri()->getPath() ? null : [$req], (new FileClaims(sys_get_temp_dir().'/x402-claims-'.bin2hex(random_bytes(8))))->__invoke(...), $f, $f, $settle ?? Settlement::mock());
     }
 
     private function handler(int $status = 200): RequestHandlerInterface

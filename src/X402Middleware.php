@@ -30,10 +30,10 @@ final class X402Middleware implements MiddlewareInterface
      *                                            fn(string $key): bool — TRUE the first time a payment is seen, FALSE
      *                                            after; atomic and durable (FileClaims, or a DB unique key). Runs before
      *                                            the handler, so a payment buys one delivery even before it settles.
-     * @param ?\Closure                 $settle
+     * @param \Closure                  $settle
      *                                            fn(array $payment, array $req): array — a facilitator's settle result
-     *                                            (success, transaction, network, payer, errorReason). NULL is mock
-     *                                            mode: signatures are checked for real, nothing moves on chain.
+     *                                            (success, transaction, network, payer, errorReason). Settlement::mock()
+     *                                            is mock mode, never implicit: nothing moves on chain.
      *                                            A FacilitatorException answers 502: not the buyer's fault.
      * @param ?EventDispatcherInterface $events
      *                                            Dispatches an AddressCheck on the payer and a PaymentOutcome; NULL: neither
@@ -56,7 +56,7 @@ final class X402Middleware implements MiddlewareInterface
         private readonly \Closure $claim,
         private readonly ResponseFactoryInterface $responses,
         private readonly StreamFactoryInterface $streams,
-        private readonly ?\Closure $settle = null,
+        private readonly \Closure $settle,
         private readonly ?EventDispatcherInterface $events = null,
         private readonly ?\Closure $verify = null,
         private readonly ?\Closure $release = null,
@@ -104,7 +104,13 @@ final class X402Middleware implements MiddlewareInterface
                 return $this->failed($accepts, $resource, $receipt);
             }
 
-            $response = $handler->handle($request);
+            try {
+                $response = $handler->handle($request);
+            } catch (\Throwable $e) {
+                // Paid and failed: recorded, so the seller can refund by hand.
+                $sale->ran(500);
+                throw $e;
+            }
             $sale->ran($response->getStatusCode());
 
             return $response->withHeader(PaymentHeaders::RESPONSE, PaymentHeaders::encode($receipt));

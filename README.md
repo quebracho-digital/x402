@@ -30,8 +30,9 @@ $middleware = new X402Middleware([new EvmExact()], $price, $claim, $psr17, $psr1
 `fn(string $key): bool` (DB unique key, Redis `SET NX`) on several.
 
 Unpaid → `402` with `PAYMENT-REQUIRED`. Paid → verify offline, run the
-handler, settle only on 2xx, answer with `PAYMENT-RESPONSE`. Without `$settle`
-(a facilitator callback) it runs in mock mode: real verification, no settle.
+handler, settle only on 2xx, answer with `PAYMENT-RESPONSE`. `$settle` is a
+facilitator callback; `Settlement::mock()` is mock mode, by name only: real
+verification, nothing moves on chain, the receipt says `extensions.mock`.
 
 Optional, by name, on both middlewares:
 
@@ -98,7 +99,8 @@ goes under the MCP client's HTTP transport instead: it pays a PaymentRequired
 tool result once, resending the call with `params._meta["x402/payment"]`, and
 reads the receipt from `result._meta["x402/payment-response"]`.
 
-`PayingHttpClient` pays a 402 once and retries the same request. The budget is a per-network cap,
+`PayingHttpClient` pays a 402 once and retries the same request. Wrap a client
+that does not follow redirects, or another host gets the signed payment. The budget is a per-network cap,
 in memory, spent when it signs (a signed authorization is money the seller
 can settle) and never refunded on the seller's word. Both buyers sign only
 known tokens (`Networks`), integer amounts and validities up to 10 minutes.

@@ -12,6 +12,7 @@ use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Quebracho\X402\Settlement;
 use Quebracho\X402\EvmExact;
 use Quebracho\X402\FacilitatorException;
 use Quebracho\X402\FileClaims;
@@ -61,7 +62,7 @@ final class SaleTest extends TestCase
             }
         };
 
-        return new X402Middleware([new EvmExact()], fn () => [$req], $this->claims->__invoke(...), $f, $f, $settle, $events, verify: $verify, release: $this->claims->release(...), resource: $resource);
+        return new X402Middleware([new EvmExact()], fn () => [$req], $this->claims->__invoke(...), $f, $f, $settle ?? Settlement::mock(), $events, verify: $verify, release: $this->claims->release(...), resource: $resource);
     }
 
     private function handler(int $status = 200): RequestHandlerInterface
@@ -128,6 +129,30 @@ final class SaleTest extends TestCase
         $this->middleware(fn () => throw new \TypeError('a third-party facilitator broke'))->process($request, $this->handler());
         $again = $this->middleware(fn () => self::tx())->process($request, $this->handler());
         $this->assertSame('duplicate_settlement', json_decode((string) $again->getBody(), true)['error']);
+    }
+
+    public function testASuccessThatDoesNotAddUpKeepsTheClaim(): void
+    {
+        $request = $this->paid();
+        $this->middleware(fn () => ['success' => false, 'errorReason' => 'invalid_settle_response'])->process($request, $this->handler());
+        $again = $this->middleware(fn () => self::tx())->process($request, $this->handler());
+        $this->assertSame('duplicate_settlement', json_decode((string) $again->getBody(), true)['error']);
+    }
+
+    public function testUpfrontRecordsAHandlerThatThrowsAfterSettling(): void
+    {
+        $throws = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                throw new \RuntimeException('tool broke');
+            }
+        };
+        try {
+            $this->middleware(fn () => self::tx(), upfront: true)->process($this->paid(true), $throws);
+            $this->fail('the exception goes on');
+        } catch (\RuntimeException) {
+        }
+        $this->assertSame('failed_after_settle', end($this->outcomes)->status);
     }
 
     public function testFacilitatorDownIs502(): void

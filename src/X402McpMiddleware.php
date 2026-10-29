@@ -35,9 +35,9 @@ final class X402McpMiddleware implements MiddlewareInterface
      *                                            fn(string $key): bool — TRUE the first time a payment is seen, FALSE
      *                                            after; atomic and durable (FileClaims, or a DB unique key). Runs before
      *                                            the handler, so a payment buys one delivery even before it settles.
-     * @param ?\Closure                 $settle
+     * @param \Closure                  $settle
      *                                            fn(array $payment, array $req): array — a facilitator's settle result.
-     *                                            NULL is mock mode: signatures are checked for real, nothing moves.
+     *                                            Settlement::mock() is mock mode, never implicit: nothing moves.
      * @param ?EventDispatcherInterface $events
      *                                            Dispatches an AddressCheck on the payer and a PaymentOutcome; NULL: neither
      * @param ?\Closure                 $verify
@@ -55,7 +55,7 @@ final class X402McpMiddleware implements MiddlewareInterface
         private readonly \Closure $claim,
         private readonly ResponseFactoryInterface $responses,
         private readonly StreamFactoryInterface $streams,
-        private readonly ?\Closure $settle = null,
+        private readonly \Closure $settle,
         private readonly ?EventDispatcherInterface $events = null,
         private readonly ?\Closure $verify = null,
         private readonly ?\Closure $release = null,

@@ -18,6 +18,9 @@ use Psr\Http\Message\StreamFactoryInterface;
  * resent once with params._meta["x402/payment"], and the receipt is read
  * from result._meta["x402/payment-response"]. The budget is spent when it signs, not only when
  * that receipt says success === true.
+ *
+ * The wrapped client must not follow redirects: one to another host would
+ * hand it the signed payment, which it could settle without delivering.
  */
 final class PayingMcpClient implements ClientInterface
 {

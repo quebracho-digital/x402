@@ -14,6 +14,9 @@ use Psr\Http\Message\ResponseInterface;
  *
  * Wrap any PSR-18 client with it, e.g. the one an MCP HTTP transport uses,
  * and paid tools just work for the agent behind it.
+ *
+ * The wrapped client must not follow redirects: one to another host would
+ * hand it the signed payment, which it could settle without delivering.
  */
 final class PayingHttpClient implements ClientInterface
 {

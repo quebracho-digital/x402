@@ -7,6 +7,7 @@ namespace Quebracho\X402\Tests;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Quebracho\X402\NearExact;
+use Quebracho\X402\Settlement;
 
 final class NearExactTest extends TestCase
 {
@@ -80,6 +81,21 @@ final class NearExactTest extends TestCase
     {
         $scheme = new NearExact(clock: fn () => self::CURRENT_BLOCK_HEIGHT);
         self::assertNull($scheme->verify(self::payment(), self::req()));
+    }
+
+    public function testOnePaymentIsOneClaimKey(): void
+    {
+        $scheme = new NearExact(clock: fn () => self::CURRENT_BLOCK_HEIGHT);
+        $payment = self::payment();
+        $key = Settlement::key($payment);
+
+        $padded = $payment;
+        $padded['payload']['signedDelegateAction'] = base64_encode(base64_decode($payment['payload']['signedDelegateAction'])."\x00");
+        self::assertNotNull($scheme->verify($padded, self::req()), 'trailing bytes are not the same payment');
+
+        $extra = $payment;
+        $extra['payload']['junk'] = 1;
+        self::assertSame($key, Settlement::key($extra), 'extra payload fields do not buy a second claim');
     }
 
     /**

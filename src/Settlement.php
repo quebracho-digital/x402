@@ -14,7 +14,8 @@ final class Settlement
      * The payment's identity: what the chain spends once, not its signature.
      *
      * EVM: network + payer + EIP-3009 nonce (re-signing the same nonce must
-     * not buy a second delivery). Solana: network + the signed message. Other
+     * not buy a second delivery). Solana: network + the signed message. NEAR: network + sender + key +
+     * nonce. Other
      * families: the whole payload.
      */
     public static function key(array $payment): string
@@ -22,11 +23,15 @@ final class Settlement
         $auth = $payment['payload']['authorization'] ?? null;
         $wire = is_string($payment['payload']['transaction'] ?? null) ? base64_decode($payment['payload']['transaction'], true) : false;
         $solana = is_string($wire) ? Solana::parse($wire) : null;
+        $near = is_string($payment['payload']['signedDelegateAction'] ?? null) ? base64_decode($payment['payload']['signedDelegateAction'], true) : false;
+        $near = is_string($near) ? NearExact::decodeSignedDelegateAction($near) : null;
         $id = match (true) {
             is_array($auth) => [$payment['accepted']['network'] ?? '', strtolower((string) ($auth['from'] ?? '')), strtolower((string) ($auth['nonce'] ?? ''))],
             // The signed message, not the signatures: the fee payer's slot is
             // empty now and filled later, and any bytes there are the same payment.
             null !== $solana => [$payment['accepted']['network'] ?? '', bin2hex($solana['message'])],
+            // What NEAR spends once: the access key's nonce.
+            null !== $near => [$payment['accepted']['network'] ?? '', $near['sender_id'], bin2hex($near['public_key_bytes']), $near['nonce']],
             default => $payment['payload'] ?? null,
         };
 
@@ -34,16 +39,21 @@ final class Settlement
     }
 
     /**
+     * Mock mode, opted into by name: signatures are verified for real, nothing
+     * moves on chain. The receipt has no transaction and says `mock`.
+     */
+    public static function mock(): \Closure
+    {
+        return fn (array $payment, array $req): array => ['success' => true, 'transaction' => '', 'network' => $req['network'], 'payer' => $payment['payload']['authorization']['from'] ?? null, 'extensions' => ['mock' => true]];
+    }
+
+    /**
      * A receipt; success only when the facilitator said `success: true`.
      *
-     * @param ?\Closure $settle
-     *                          NULL is mock mode: a receipt without a transaction, nothing moved
+     * @param \Closure $settle fn(array $payment, array $req): array
      */
-    public static function run(?\Closure $settle, array $payment, array $req): array
+    public static function run(\Closure $settle, array $payment, array $req): array
     {
-        if (null === $settle) {
-            return ['success' => true, 'transaction' => '', 'network' => $req['network'], 'payer' => $payment['payload']['authorization']['from'] ?? null];
-        }
         try {
             $receipt = $settle($payment, $req);
         } catch (FacilitatorException) {

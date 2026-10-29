@@ -22,7 +22,7 @@ final class Sale
     public function __construct(
         private readonly array $schemes,
         private readonly \Closure $claim,
-        private readonly ?\Closure $settle,
+        private readonly \Closure $settle,
         private readonly ?EventDispatcherInterface $events,
         private readonly ?\Closure $verify,
         private readonly ?\Closure $release,
@@ -85,8 +85,8 @@ final class Sale
             $this->outcome('settled', $handlerStatus, $receipt);
         } else {
             // A transaction may still land (pending, or a facilitator that went
-            // silent after we sent it): keep the claim. Only a clear refusal frees it.
-            if ('' === ($receipt['transaction'] ?? '') && !\in_array($receipt['errorReason'], ['settlement_pending', self::UNAVAILABLE, 'unexpected_settle_error'], true)) {
+            // silent after we sent it, or one whose success did not add up): keep the claim. Only a clear refusal frees it.
+            if ('' === ($receipt['transaction'] ?? '') && !\in_array($receipt['errorReason'], ['settlement_pending', self::UNAVAILABLE, 'unexpected_settle_error', 'invalid_settle_response'], true)) {
                 $this->free();
             }
             $this->outcome('not_settled', $handlerStatus, $receipt, $receipt['errorReason']);

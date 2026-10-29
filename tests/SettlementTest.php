@@ -26,6 +26,14 @@ final class SettlementTest extends TestCase
         self::assertNotSame($key, Settlement::key(self::payment(network: 'eip155:5042002')));
     }
 
+    public function testMockSaysSo(): void
+    {
+        $receipt = Settlement::run(Settlement::mock(), self::payment(), ['network' => 'eip155:84532']);
+        self::assertTrue($receipt['success']);
+        self::assertSame('', $receipt['transaction']);
+        self::assertTrue($receipt['extensions']['mock']);
+    }
+
     public function testOnlyALiteralTrueIsASettlement(): void
     {
         $req = ['network' => 'eip155:84532'];

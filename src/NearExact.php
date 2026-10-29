@@ -366,6 +366,10 @@ final class NearExact implements Scheme
                 return null;
             } // Ed25519
             $sigBytes = substr($bytes, $offset, 64);
+            // Trailing bytes would make the same payment look new to the claim.
+            if ($offset + 64 !== $len) {
+                return null;
+            }
 
             return [
                 'sender_id' => $senderId,
