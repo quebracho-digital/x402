@@ -145,8 +145,13 @@ $dispatcher->addListener(AddressCheck::class, function (AddressCheck $check) use
 ## Schemes
 
 `Scheme` (`supports`, `pay`, `verify`, `payer`) is one chain family; experimental until
-1.0. `EvmExact` is the stable one. `NearExact` (`near:testnet`) is
-experimental, see [docs/near.md](docs/near.md).
+1.0. `EvmExact` is the stable one. `SolanaExact` (`solana:*`, Solana devnet
+USDC built in) pays with a `SolanaKey` and verifies offline: one
+TransferChecked to the seller's token account, the fee payer in no
+instruction, compute caps of the spec, the buyer's signature. Smart wallets
+and lookup tables are refused. `unsignedTransaction()` hands the transaction
+to a browser wallet. The offer needs `extra.feePayer` (`HttpFacilitator::feePayer`).
+`NearExact` (`near:testnet`) is experimental, see [docs/near.md](docs/near.md).
 
 ## Hardening
 

@@ -14,14 +14,21 @@ final class Settlement
      * The payment's identity: what the chain spends once, not its signature.
      *
      * EVM: network + payer + EIP-3009 nonce (re-signing the same nonce must
-     * not buy a second delivery). Other families: the whole payload.
+     * not buy a second delivery). Solana: network + the signed message. Other
+     * families: the whole payload.
      */
     public static function key(array $payment): string
     {
         $auth = $payment['payload']['authorization'] ?? null;
-        $id = is_array($auth)
-          ? [$payment['accepted']['network'] ?? '', strtolower((string) ($auth['from'] ?? '')), strtolower((string) ($auth['nonce'] ?? ''))]
-          : $payment['payload'] ?? null;
+        $wire = is_string($payment['payload']['transaction'] ?? null) ? base64_decode($payment['payload']['transaction'], true) : false;
+        $solana = is_string($wire) ? Solana::parse($wire) : null;
+        $id = match (true) {
+            is_array($auth) => [$payment['accepted']['network'] ?? '', strtolower((string) ($auth['from'] ?? '')), strtolower((string) ($auth['nonce'] ?? ''))],
+            // The signed message, not the signatures: the fee payer's slot is
+            // empty now and filled later, and any bytes there are the same payment.
+            null !== $solana => [$payment['accepted']['network'] ?? '', bin2hex($solana['message'])],
+            default => $payment['payload'] ?? null,
+        };
 
         return hash('sha256', json_encode($id, JSON_THROW_ON_ERROR));
     }

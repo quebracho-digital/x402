@@ -1,6 +1,6 @@
 Parts of this library (Eip712, Signer, Transfer, PaymentHeaders, Networks,
 InvalidPaymentException, Authorization, Rpc, SellerProof,
-HttpFacilitator, ChainFacilitator) were first written by Leo Fishman
+HttpFacilitator, ChainFacilitator, Solana, SolanaKey, SolanaExact) were first written by Leo Fishman
 for the x402_pay Drupal module, published there under GPL-2.0-or-later.
 As their sole author, he relicenses them here under the MIT License (see
 ../../LICENSE).

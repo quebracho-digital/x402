@@ -22,33 +22,33 @@ final class X402Middleware implements MiddlewareInterface
 {
     /**
      * @param Scheme[]                  $schemes
-     *                                           The schemes this seller verifies, one per chain family
+     *                                            The schemes this seller verifies, one per chain family
      * @param \Closure                  $price
-     *                                           fn(ServerRequestInterface): ?array — the `accepts` list (payment
-     *                                           requirements) for a request, or NULL when it is free
+     *                                            fn(ServerRequestInterface): ?array — the `accepts` list (payment
+     *                                            requirements) for a request, or NULL when it is free
      * @param \Closure                  $claim
-     *                                           fn(string $key): bool — TRUE the first time a payment is seen, FALSE
-     *                                           after; atomic and durable (FileClaims, or a DB unique key). Runs before
-     *                                           the handler, so a payment buys one delivery even before it settles.
+     *                                            fn(string $key): bool — TRUE the first time a payment is seen, FALSE
+     *                                            after; atomic and durable (FileClaims, or a DB unique key). Runs before
+     *                                            the handler, so a payment buys one delivery even before it settles.
      * @param ?\Closure                 $settle
-     *                                           fn(array $payment, array $req): array — a facilitator's settle result
-     *                                           (success, transaction, network, payer, errorReason). NULL is mock
-     *                                           mode: signatures are checked for real, nothing moves on chain.
-     *                                           A FacilitatorException answers 502: not the buyer's fault.
+     *                                            fn(array $payment, array $req): array — a facilitator's settle result
+     *                                            (success, transaction, network, payer, errorReason). NULL is mock
+     *                                            mode: signatures are checked for real, nothing moves on chain.
+     *                                            A FacilitatorException answers 502: not the buyer's fault.
      * @param ?EventDispatcherInterface $events
-     *                                           Dispatches an AddressCheck on the payer and a PaymentOutcome; NULL: neither
+     *                                            Dispatches an AddressCheck on the payer and a PaymentOutcome; NULL: neither
      * @param ?\Closure                 $verify
-     *                                           fn(array $payment, array $req): ?string — an online check (facilitator
-     *                                           /verify, eth_call) after the offline one, before the claim: a reason,
-     *                                           or NULL when good. NULL skips it: the handler may run for a payment
-     *                                           settle then refuses (its output withheld).
+     *                                            fn(array $payment, array $req): ?string — an online check (facilitator
+     *                                            /verify, eth_call) after the offline one, before the claim: a reason,
+     *                                            or NULL when good. NULL skips it: the handler may run for a payment
+     *                                            settle then refuses (its output withheld).
      * @param ?\Closure                 $release
-     *                                           fn(string $key): void — frees a claim when nothing was charged (the
-     *                                           handler failed, or settle failed with no transaction), so the buyer's
-     *                                           signature is good again. NULL keeps every claim.
+     *                                            fn(string $key): void — frees a claim when nothing was charged (the
+     *                                            handler failed, or settle failed with no transaction), so the buyer's
+     *                                            signature is good again. NULL keeps every claim.
      * @param ?\Closure                 $resource
-     *                                           fn(ServerRequestInterface): array — the 402's resource (url,
-     *                                           description, mimeType); default: the request URL
+     *                                            fn(ServerRequestInterface): array — the 402's resource (url,
+     *                                            description, mimeType); default: the request URL
      */
     public function __construct(
         private readonly array $schemes,

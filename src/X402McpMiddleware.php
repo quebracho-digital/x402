@@ -27,27 +27,27 @@ final class X402McpMiddleware implements MiddlewareInterface
 
     /**
      * @param Scheme[]                  $schemes
-     *                                           The schemes this seller verifies, one per chain family
+     *                                            The schemes this seller verifies, one per chain family
      * @param \Closure                  $price
-     *                                           fn(array $params): ?array — the `accepts` list for a tools/call with
-     *                                           these params (name, arguments), or NULL when the tool is free
+     *                                            fn(array $params): ?array — the `accepts` list for a tools/call with
+     *                                            these params (name, arguments), or NULL when the tool is free
      * @param \Closure                  $claim
-     *                                           fn(string $key): bool — TRUE the first time a payment is seen, FALSE
-     *                                           after; atomic and durable (FileClaims, or a DB unique key). Runs before
-     *                                           the handler, so a payment buys one delivery even before it settles.
+     *                                            fn(string $key): bool — TRUE the first time a payment is seen, FALSE
+     *                                            after; atomic and durable (FileClaims, or a DB unique key). Runs before
+     *                                            the handler, so a payment buys one delivery even before it settles.
      * @param ?\Closure                 $settle
-     *                                           fn(array $payment, array $req): array — a facilitator's settle result.
-     *                                           NULL is mock mode: signatures are checked for real, nothing moves.
+     *                                            fn(array $payment, array $req): array — a facilitator's settle result.
+     *                                            NULL is mock mode: signatures are checked for real, nothing moves.
      * @param ?EventDispatcherInterface $events
-     *                                           Dispatches an AddressCheck on the payer and a PaymentOutcome; NULL: neither
+     *                                            Dispatches an AddressCheck on the payer and a PaymentOutcome; NULL: neither
      * @param ?\Closure                 $verify
-     *                                           fn(array $payment, array $req): ?string — online check before the claim,
-     *                                           as in X402Middleware
+     *                                            fn(array $payment, array $req): ?string — online check before the claim,
+     *                                            as in X402Middleware
      * @param ?\Closure                 $release
-     *                                           fn(string $key): void — frees a claim when nothing was charged
+     *                                            fn(string $key): void — frees a claim when nothing was charged
      * @param ?\Closure                 $resource
-     *                                           fn(array $params): array — the PaymentRequired's resource (url,
-     *                                           description, mimeType); default: mcp://tool/<name>
+     *                                            fn(array $params): array — the PaymentRequired's resource (url,
+     *                                            description, mimeType); default: mcp://tool/<name>
      */
     public function __construct(
         private readonly array $schemes,

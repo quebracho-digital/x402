@@ -68,23 +68,29 @@ final class Budget
         if (null === $cap || !is_string($req['amount'] ?? null) || !preg_match('/^[1-9][0-9]{0,77}$/', $req['amount'])) {
             return false;
         }
-        // Canonical only: Eip712 pads and strips 0x, so "0330…" or "0x000330…"
-        // would sign to the same address that screening was shown in another form.
-        if (!is_string($req['payTo'] ?? null) || !preg_match('/^0x[0-9a-fA-F]{40}$/', $req['payTo'])) {
-            return false;
-        }
         $timeout = $req['maxTimeoutSeconds'] ?? null;
         if (!is_int($timeout) || $timeout < 1 || $timeout > self::MAX_TIMEOUT) {
             return false;
         }
-        // The cap is in this token's units: any other asset or EIP-712 domain
-        // would make it meaningless (or sign for a token we did not mean).
-        try {
-            $token = Networks::get($network);
-        } catch (\InvalidArgumentException) {
+        $token = Networks::find($network);
+        // The cap is in this token's units: any other asset would make it meaningless.
+        $asset = (string) ($req['asset'] ?? '');
+        if (null === $token || (str_starts_with($network, 'eip155:') ? 0 !== strcasecmp($asset, $token['asset']) : $asset !== $token['asset'])) {
             return false;
         }
-        if (0 !== strcasecmp((string) ($req['asset'] ?? ''), $token['asset']) || ($req['extra']['name'] ?? null) !== $token['extra']['name'] || ($req['extra']['version'] ?? null) !== $token['extra']['version']) {
+        if (str_starts_with($network, 'solana:')) {
+            // Base58 only, one spelling; the fee payer signs last and pays fees, never us.
+            $base58 = '/^[1-9A-HJ-NP-Za-km-z]{32,44}$/';
+            if (!preg_match($base58, (string) ($req['payTo'] ?? '')) || !preg_match($base58, (string) ($req['extra']['feePayer'] ?? '')) || gmp_cmp($req['amount'], (string) PHP_INT_MAX) > 0) {
+                return false;
+            }
+        } elseif (
+            // Canonical only: Eip712 pads and strips 0x, so "0330…" or "0x000330…"
+            // would sign to the same address that screening was shown in another form.
+            !is_string($req['payTo'] ?? null) || !preg_match('/^0x[0-9a-fA-F]{40}$/', $req['payTo'])
+            // Another EIP-712 domain would sign for a token we did not mean.
+            || ($req['extra']['name'] ?? null) !== ($token['extra']['name'] ?? false) || ($req['extra']['version'] ?? null) !== ($token['extra']['version'] ?? false)
+        ) {
             return false;
         }
 

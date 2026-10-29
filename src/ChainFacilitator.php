@@ -25,13 +25,13 @@ final class ChainFacilitator implements Facilitator
     private const MARGIN = 3;
 
     /**
-     * @param string    $network
+     * @param string   $network
      *                             The CAIP-2 network $rpc talks to; other networks are refused
-     * @param \Closure  $serialize
+     * @param \Closure $serialize
      *                             fn(string $name, callable $run): mixed, runs $run holding a lock named
      *                             $name across every process (flock, DB, Redis): one sender, one nonce
      *                             at a time, or parallel settles replace each other's transactions
-     * @param ?string   $maxGasCost
+     * @param ?string  $maxGasCost
      *                             Wei: no settle whose gas limit × max fee costs more (a buyer can make
      *                             our transaction revert and burn gas); NULL is no cap
      */
