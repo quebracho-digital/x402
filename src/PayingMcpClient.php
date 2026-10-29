@@ -30,6 +30,10 @@ final class PayingMcpClient implements ClientInterface
      * @param ?EventDispatcherInterface $events
      *                                           Dispatches an AddressCheck on each offer's payTo before signing it;
      *                                           NULL screens nothing
+     * @param ?\Closure                 $onRefused
+     *                                           fn(array $req, string $reason): void — each offer not paid, and why
+     *                                           (no_scheme, not_allowed, or the screening's reason), e.g. to tell the
+     *                                           user the price it refused
      */
     public function __construct(
         private readonly ClientInterface $client,
@@ -38,6 +42,7 @@ final class PayingMcpClient implements ClientInterface
         private readonly StreamFactoryInterface $streams,
         private readonly ?\Closure $onPaid = null,
         private readonly ?EventDispatcherInterface $events = null,
+        private readonly ?\Closure $onRefused = null,
     ) {
     }
 
@@ -62,28 +67,27 @@ final class PayingMcpClient implements ClientInterface
         $this->budget->reclaim();
         // The first offer we have a scheme for and the budget allows.
         foreach ($required['accepts'] ?? [] as $req) {
-            foreach ($this->schemes as $scheme) {
-                if (!is_array($req) || !$scheme->supports((string) ($req['network'] ?? '')) || !$this->budget->allows($req)
-                  || null !== AddressCheck::run($this->events, AddressCheck::PAY_TO, is_string($req['payTo'] ?? null) ? $req['payTo'] : null, $req)) {
-                    continue;
-                }
-                // Spent when signed: a signed authorization is money the seller can
-                // settle on its own, whatever it answers. Never refunded here.
-                $this->budget->spend($req);
-                $payment = $scheme->pay($required, $req);
-                $call['params']['_meta'][X402McpMiddleware::PAYMENT] = $payment;
-                $paid = $request->withBody($this->streams->createStream(json_encode($call, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)));
-                [$response, $result] = $this->answer($this->client->sendRequest($paid), $call['id']);
-                $receipt = $result['_meta'][X402McpMiddleware::PAYMENT_RESPONSE] ?? null;
-                if (is_array($receipt)) {
-                    $this->onPaid?->__invoke((string) $call['params']['name'], $req, $receipt);
-                }
-                if (($receipt['success'] ?? null) !== true) {
-                    $this->budget->unsettled($req, $payment);
-                }
-
-                return $response;
+            [$scheme, $reason] = $this->budget->choose($this->schemes, $req, $this->events);
+            if (null !== $reason) {
+                $this->onRefused?->__invoke(is_array($req) ? $req : [], $reason);
+                continue;
             }
+            // Spent when signed: a signed authorization is money the seller can
+            // settle on its own, whatever it answers. Never refunded here.
+            $this->budget->spend($req);
+            $payment = $scheme->pay($required, $req);
+            $call['params']['_meta'][X402McpMiddleware::PAYMENT] = $payment;
+            $paid = $request->withBody($this->streams->createStream(json_encode($call, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)));
+            [$response, $result] = $this->answer($this->client->sendRequest($paid), $call['id']);
+            $receipt = $result['_meta'][X402McpMiddleware::PAYMENT_RESPONSE] ?? null;
+            if (is_array($receipt)) {
+                $this->onPaid?->__invoke((string) $call['params']['name'], $req, $receipt);
+            }
+            if (($receipt['success'] ?? null) !== true) {
+                $this->budget->unsettled($req, $payment);
+            }
+
+            return $response;
         }
 
         // Nothing we can or may pay: the caller sees the PaymentRequired itself.

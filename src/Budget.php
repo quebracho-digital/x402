@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Quebracho\X402;
 
+use Psr\EventDispatcher\EventDispatcherInterface;
+
 /**
  * A spending cap per network, in the token's atomic units.
  *
@@ -95,6 +97,26 @@ final class Budget
         }
 
         return gmp_cmp(gmp_add($this->spent[$network] ?? 0, $req['amount']), $cap) <= 0;
+    }
+
+    /**
+     * The scheme to pay $req with, or why not: no_scheme, not_allowed
+     * (over budget, unknown token, odd offer) or the payTo screening's reason.
+     *
+     * @param Scheme[] $schemes
+     *
+     * @return array{?Scheme, ?string}
+     */
+    public function choose(array $schemes, mixed $req, ?EventDispatcherInterface $events): array
+    {
+        $scheme = is_array($req) ? current(array_filter($schemes, fn (Scheme $s) => $s->supports((string) ($req['network'] ?? '')))) : false;
+        $reason = match (true) {
+            false === $scheme => 'no_scheme',
+            !$this->allows($req) => 'not_allowed',
+            default => AddressCheck::run($events, AddressCheck::PAY_TO, is_string($req['payTo'] ?? null) ? $req['payTo'] : null, $req),
+        };
+
+        return null === $reason ? [$scheme, null] : [null, $reason];
     }
 
     public function spend(array $req): void

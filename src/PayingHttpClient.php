@@ -27,6 +27,10 @@ final class PayingHttpClient implements ClientInterface
      * @param ?EventDispatcherInterface $events
      *                                           Dispatches an AddressCheck on each offer's payTo before signing it;
      *                                           NULL screens nothing
+     * @param ?\Closure                 $onRefused
+     *                                           fn(array $req, string $reason): void — each offer not paid, and why
+     *                                           (no_scheme, not_allowed, or the screening's reason), e.g. to tell the
+     *                                           user the price it refused
      */
     public function __construct(
         private readonly ClientInterface $client,
@@ -34,6 +38,7 @@ final class PayingHttpClient implements ClientInterface
         private readonly Budget $budget,
         private readonly ?\Closure $onPaid = null,
         private readonly ?EventDispatcherInterface $events = null,
+        private readonly ?\Closure $onRefused = null,
     ) {
     }
 
@@ -55,34 +60,33 @@ final class PayingHttpClient implements ClientInterface
         $this->budget->reclaim();
         // The first offer we have a scheme for and the budget allows.
         foreach ($required['accepts'] ?? [] as $req) {
-            foreach ($this->schemes as $scheme) {
-                if (!$scheme->supports((string) ($req['network'] ?? '')) || !$this->budget->allows($req)
-                  || null !== AddressCheck::run($this->events, AddressCheck::PAY_TO, is_string($req['payTo'] ?? null) ? $req['payTo'] : null, $req)) {
-                    continue;
-                }
-                // Spent when signed: a signed authorization is money the seller can
-                // settle on its own, whatever it answers. Never refunded here.
-                $this->budget->spend($req);
-                $payment = $scheme->pay($required, $req);
-                // The same request, paid: the body is read again from the start.
-                if ($request->getBody()->isSeekable()) {
-                    $request->getBody()->rewind();
-                }
-                $paid = $this->client->sendRequest($request->withHeader(PaymentHeaders::SIGNATURE, PaymentHeaders::encode($payment)));
-                $receipt = $paid->getHeaderLine(PaymentHeaders::RESPONSE);
-                try {
-                    $receipt = '' === $receipt ? null : PaymentHeaders::decode($receipt);
-                } catch (InvalidPaymentException) {
-                    $receipt = null;
-                }
-                if (($receipt['success'] ?? null) === true) {
-                    $this->onPaid?->__invoke($req, $receipt);
-                } else {
-                    $this->budget->unsettled($req, $payment);
-                }
-
-                return $paid;
+            [$scheme, $reason] = $this->budget->choose($this->schemes, $req, $this->events);
+            if (null !== $reason) {
+                $this->onRefused?->__invoke(is_array($req) ? $req : [], $reason);
+                continue;
             }
+            // Spent when signed: a signed authorization is money the seller can
+            // settle on its own, whatever it answers. Never refunded here.
+            $this->budget->spend($req);
+            $payment = $scheme->pay($required, $req);
+            // The same request, paid: the body is read again from the start.
+            if ($request->getBody()->isSeekable()) {
+                $request->getBody()->rewind();
+            }
+            $paid = $this->client->sendRequest($request->withHeader(PaymentHeaders::SIGNATURE, PaymentHeaders::encode($payment)));
+            $receipt = $paid->getHeaderLine(PaymentHeaders::RESPONSE);
+            try {
+                $receipt = '' === $receipt ? null : PaymentHeaders::decode($receipt);
+            } catch (InvalidPaymentException) {
+                $receipt = null;
+            }
+            if (($receipt['success'] ?? null) === true) {
+                $this->onPaid?->__invoke($req, $receipt);
+            } else {
+                $this->budget->unsettled($req, $payment);
+            }
+
+            return $paid;
         }
 
         // Nothing we can or may pay: the caller sees the 402 itself.

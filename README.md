@@ -106,6 +106,12 @@ With `Budget::usd($network, $usd, $used)`, where `$used` reads the token's
 `authorizationState` on chain, a signature the seller never settled frees
 its amount once it expires unused.
 
+`onRefused: fn(array $req, string $reason)` on both buyers says why an offer
+was not paid (`no_scheme`, `not_allowed`, or the screening's reason).
+PSR-18 has no per-request options: give the wrapped client a timeout longer
+than the offers' `maxTimeoutSeconds` plus the seller's settle (e.g. 120 s), or
+a buyer that hangs up early may be charged for an answer it never reads.
+
 ## Networks
 
 Built in: Base Sepolia, Arc testnet, Ethereum Sepolia, Avalanche Fuji, Polygon
@@ -157,6 +163,15 @@ to a browser wallet. The offer needs `extra.feePayer` (`HttpFacilitator::feePaye
 
 What it resists, each backed by a test, is listed in the
 [repository README](../../README.md#attacks-it-resists).
+
+## Frameworks without PSR-7
+
+Drupal and Symfony speak HttpFoundation: bridge both ways with
+`symfony/psr-http-message-bridge` and a PSR-17 factory. That buffers the body,
+so streamed and file responses lose their laziness; fine for paid JSON or
+Markdown. The steps are plain calls underneath (`Scheme::verify`,
+`Settlement::key`, `Settlement::run`, a `Facilitator`), so a framework can
+charge without PSR-15 too.
 
 ## Tests
 
