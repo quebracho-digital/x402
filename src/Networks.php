@@ -60,12 +60,77 @@ final class Networks
             'rpc' => 'https://rpc-amoy.polygon.technology',
             'explorer' => 'https://amoy.polygonscan.com/tx/',
         ],
+        // Solana devnet, as x402.org/facilitator names it (genesis hash). `asset` is
+        // the USDC mint; the facilitator's fee payer goes in `extra` per offer
+        // (HttpFacilitator::feePayer).
+        'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1' => [
+            'label' => 'Solana devnet (USDC)',
+            'asset' => '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+            'decimals' => 6,
+            'extra' => [],
+            'rpc' => 'https://api.devnet.solana.com',
+            'explorer' => 'https://explorer.solana.com/tx/',
+        ],
     ];
 
     /**
-     * Networks added at runtime with add(), on top of ALL.
+     * Networks added at runtime with add()/addSolana(), on top of ALL.
+     *
+     * ponytail: process-global, so a site registers its networks once at boot
+     * (mainnets included: that is the supported way); tests call reset().
      */
     private static array $added = [];
+
+    /**
+     * Every network, built in and added: id => settings.
+     */
+    public static function all(): array
+    {
+        return self::$added + self::ALL;
+    }
+
+    public static function has(string $network): bool
+    {
+        return isset(self::$added[$network]) || isset(self::ALL[$network]);
+    }
+
+    /**
+     * One network's settings, or NULL when unknown (get() throws).
+     */
+    public static function find(string $network): ?array
+    {
+        return self::$added[$network] ?? self::ALL[$network] ?? null;
+    }
+
+    /**
+     * Forgets every added network.
+     */
+    public static function reset(): void
+    {
+        self::$added = [];
+    }
+
+    /**
+     * Adds a Solana cluster (its genesis hash) and SPL token mint.
+     *
+     * @throws \InvalidArgumentException
+     *                                   Not base58 of the right length
+     */
+    public static function addSolana(string $genesis, string $mint, string $label = '', int $decimals = 6, string $rpc = '', string $explorer = ''): string
+    {
+        if (!self::isSolanaAddress($genesis) || !self::isSolanaAddress($mint)) {
+            throw new \InvalidArgumentException('A genesis hash and a mint are base58, 32 to 44 characters.');
+        }
+        $network = "solana:$genesis";
+        self::$added[$network] = ['label' => $label ?: $network, 'asset' => $mint, 'decimals' => $decimals, 'extra' => [], 'rpc' => $rpc, 'explorer' => $explorer];
+
+        return $network;
+    }
+
+    private static function isSolanaAddress(string $s): bool
+    {
+        return 1 === preg_match('/^[1-9A-HJ-NP-Za-km-z]{32,44}$/', $s);
+    }
 
     /**
      * Adds any EVM chain whose token implements EIP-3009.
@@ -121,13 +186,17 @@ final class Networks
     public static function requirements(string $network, string $usd, string $payTo, int $timeout = self::TIMEOUT): array
     {
         $token = self::get($network);
+        $evm = str_starts_with($network, 'eip155:');
+        if ($evm ? !preg_match('/^0x[0-9a-fA-F]{40}$/', $payTo) : !self::isSolanaAddress($payTo)) {
+            throw new \InvalidArgumentException("Not a payTo address on $network: $payTo.");
+        }
 
         return [
             'scheme' => 'exact',
             'network' => $network,
             'amount' => self::atomic($usd, $token['decimals']),
             'asset' => $token['asset'],
-            'payTo' => $payTo,
+            'payTo' => $evm ? Signer::checksum($payTo) : $payTo,
             'maxTimeoutSeconds' => $timeout,
             'extra' => $token['extra'],
         ];
