@@ -86,7 +86,7 @@ final class Sale
         } else {
             // A transaction may still land (pending, or a facilitator that went
             // silent after we sent it): keep the claim. Only a clear refusal frees it.
-            if ('' === ($receipt['transaction'] ?? '') && !\in_array($receipt['errorReason'], ['settlement_pending', self::UNAVAILABLE], true)) {
+            if ('' === ($receipt['transaction'] ?? '') && !\in_array($receipt['errorReason'], ['settlement_pending', self::UNAVAILABLE, 'unexpected_settle_error'], true)) {
                 $this->free();
             }
             $this->outcome('not_settled', $handlerStatus, $receipt, $receipt['errorReason']);

@@ -122,6 +122,14 @@ final class SaleTest extends TestCase
         $this->assertSame('duplicate_settlement', json_decode((string) $again->getBody(), true)['error']);
     }
 
+    public function testAnUnexpectedSettleErrorKeepsTheClaim(): void
+    {
+        $request = $this->paid();
+        $this->middleware(fn () => throw new \TypeError('a third-party facilitator broke'))->process($request, $this->handler());
+        $again = $this->middleware(fn () => self::tx())->process($request, $this->handler());
+        $this->assertSame('duplicate_settlement', json_decode((string) $again->getBody(), true)['error']);
+    }
+
     public function testFacilitatorDownIs502(): void
     {
         $down = fn () => throw new FacilitatorException('timeout');
