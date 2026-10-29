@@ -44,6 +44,9 @@ Optional, by name, on both middlewares:
 - `extra.paymentFlow = 'upfront'` in an offer settles before the handler runs;
   once money moved, the receipt goes with whatever the handler answers.
 - A `FacilitatorException` answers 502 on HTTP (`facilitator_unavailable` on MCP).
+  On settle the claim is kept: the facilitator may have sent the transaction.
+- A tool result with `isError` is not charged and goes out as it is: a paid
+  tool must not put what it sells in its errors.
 - `$events` also receives a `PaymentOutcome` (settled, not_settled, failed,
   rejected) per paid request; a listener that throws cannot undo a sale.
 

@@ -84,8 +84,9 @@ final class Sale
         if (true === $receipt['success']) {
             $this->outcome('settled', $handlerStatus, $receipt);
         } else {
-            // A transaction may still land (settlement_pending): keep the claim.
-            if ('' === ($receipt['transaction'] ?? '') && 'settlement_pending' !== $receipt['errorReason']) {
+            // A transaction may still land (pending, or a facilitator that went
+            // silent after we sent it): keep the claim. Only a clear refusal frees it.
+            if ('' === ($receipt['transaction'] ?? '') && !\in_array($receipt['errorReason'], ['settlement_pending', self::UNAVAILABLE], true)) {
                 $this->free();
             }
             $this->outcome('not_settled', $handlerStatus, $receipt, $receipt['errorReason']);
@@ -101,6 +102,17 @@ final class Sale
     {
         $this->free();
         $this->outcome('failed', $handlerStatus);
+    }
+
+    /**
+     * Upfront: money moved before the handler; record a handler that then failed,
+     * so the seller can refund by hand.
+     */
+    public function ran(int $handlerStatus): void
+    {
+        if ($handlerStatus < 200 || $handlerStatus >= 300) {
+            $this->outcome('failed_after_settle', $handlerStatus);
+        }
     }
 
     private function free(): void

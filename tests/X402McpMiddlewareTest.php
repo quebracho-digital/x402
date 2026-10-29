@@ -28,9 +28,12 @@ final class X402McpMiddlewareTest extends TestCase
         $this->claims = (new FileClaims(sys_get_temp_dir().'/x402-claims-'.bin2hex(random_bytes(8))))->__invoke(...);
     }
 
-    private function middleware(?\Closure $settle = null): X402McpMiddleware
+    private function middleware(?\Closure $settle = null, bool $upfront = false): X402McpMiddleware
     {
         $req = Networks::requirements('eip155:84532', '0.01', '0x000000000000000000000000000000000000dEaD');
+        if ($upfront) {
+            $req['extra']['paymentFlow'] = 'upfront';
+        }
         $f = new Psr17Factory();
 
         return new X402McpMiddleware([new EvmExact()], fn (array $params) => 'wisdom' === $params['name'] ? [$req] : null, $this->claims, $f, $f, $settle);
@@ -209,5 +212,23 @@ final class X402McpMiddlewareTest extends TestCase
             }
         };
         self::assertSame(404, $this->middleware()->process($this->paidCall(), $refusal)->getStatusCode());
+    }
+
+    public function testUpfrontSettlesBeforeTheToolRuns(): void
+    {
+        $tx = fn () => ['success' => true, 'transaction' => '0x'.str_repeat('ab', 32), 'network' => 'eip155:84532'];
+        $required = self::toolResult($this->middleware(upfront: true)->process(self::call('wisdom'), $this->handler()))['structuredContent'];
+        $buyer = new EvmExact(new Signer('0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318'));
+        $pay = fn () => self::call('wisdom', $buyer->pay($required, $required['accepts'][0]));
+
+        $refused = self::toolResult($this->middleware(fn () => ['success' => false, 'errorReason' => 'insufficient_funds'], true)->process($pay(), $this->handler()));
+        self::assertSame(['insufficient_funds', 0], [$refused['structuredContent']['error'], $this->runs]);
+
+        $paid = self::toolResult($this->middleware($tx, true)->process($pay(), $this->handler()));
+        self::assertTrue($paid['_meta']['x402/payment-response']['success']);
+        // Charged first: a failing tool still carries the receipt.
+        $failed = self::toolResult($this->middleware($tx, true)->process($pay(), $this->handler(['isError' => true, 'content' => []])));
+        self::assertTrue($failed['_meta']['x402/payment-response']['success']);
+        self::assertSame(2, $this->runs);
     }
 }

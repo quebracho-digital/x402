@@ -10,7 +10,8 @@ namespace Quebracho\X402;
  *
  * status: settled (money moved, delivered), not_settled (ran, settle failed:
  * withheld), failed (the handler delivered nothing: nothing charged),
- * rejected (refused before running: bad, screened, replayed, unavailable).
+ * rejected (refused before running: bad, screened, replayed, unavailable),
+ * failed_after_settle (upfront: charged, then the handler failed; refund by hand).
  */
 final class PaymentOutcome
 {

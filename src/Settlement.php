@@ -40,7 +40,8 @@ final class Settlement
         try {
             $receipt = $settle($payment, $req);
         } catch (FacilitatorException) {
-            // Not the buyer's fault: the HTTP transport answers 502, the claim is freed.
+            // Not the buyer's fault: the HTTP transport answers 502. It may have sent the
+            // transaction before going silent, so the claim is kept.
             $receipt = ['success' => false, 'errorReason' => Sale::UNAVAILABLE];
         } catch (\Throwable) {
             $receipt = null;

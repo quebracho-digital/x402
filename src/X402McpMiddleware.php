@@ -123,12 +123,15 @@ final class X402McpMiddleware implements MiddlewareInterface
             }
         }
 
-        $response = $handler->handle($request);
+        try {
+            $response = $handler->handle($request);
+        } catch (\Throwable $e) {
+            null === $receipt ? $sale->abandon(null) : $sale->ran(500);
+            throw $e;
+        }
         if (200 !== $response->getStatusCode()) {
             // The transport refused it (session, protocol): nothing ran.
-            if (null === $receipt) {
-                $sale->abandon($response->getStatusCode());
-            }
+            null === $receipt ? $sale->abandon($response->getStatusCode()) : $sale->ran($response->getStatusCode());
 
             return $response;
         }
@@ -146,6 +149,10 @@ final class X402McpMiddleware implements MiddlewareInterface
                 if (true !== $receipt['success']) {
                     return ['receipt' => $receipt];
                 }
+            }
+            if (!$delivered) {
+                // Upfront, charged: the tool failed after the money moved.
+                $sale->ran(500);
             }
             if (isset($out['result'])) {
                 $out['result']['_meta'][self::PAYMENT_RESPONSE] = $receipt;

@@ -104,10 +104,18 @@ final class X402Middleware implements MiddlewareInterface
                 return $this->failed($accepts, $resource, $receipt);
             }
 
-            return $handler->handle($request)->withHeader(PaymentHeaders::RESPONSE, PaymentHeaders::encode($receipt));
+            $response = $handler->handle($request);
+            $sale->ran($response->getStatusCode());
+
+            return $response->withHeader(PaymentHeaders::RESPONSE, PaymentHeaders::encode($receipt));
         }
 
-        $response = $handler->handle($request);
+        try {
+            $response = $handler->handle($request);
+        } catch (\Throwable $e) {
+            $sale->abandon(null);
+            throw $e;
+        }
         $status = $response->getStatusCode();
         if ($status < 200 || $status >= 300) {
             // Nothing delivered, nothing charged.

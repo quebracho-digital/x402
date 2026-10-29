@@ -60,7 +60,12 @@ final class HttpFacilitator implements Facilitator
         $id = $out['extensions']['settlement-status']['paymentId'] ?? null;
         for ($i = 0; true !== ($out['success'] ?? null) && is_string($id) && preg_match('/^[\w-]+$/', $id) && $i < $this->pollAttempts; ++$i) {
             sleep($this->pollDelaySeconds);
-            $status = $this->call('GET', "/status/$id", 'status', $req['network'], '');
+            try {
+                $status = $this->call('GET', "/status/$id", 'status', $req['network'], '');
+            } catch (FacilitatorException) {
+                // Settled or not, Circle knows it by this id.
+                break;
+            }
             if ('completed' === ($status['status'] ?? null)) {
                 $out = ['success' => true, 'transaction' => $status['transaction'] ?? null, 'network' => $status['network'] ?? $req['network'], 'payer' => $status['payer'] ?? $out['payer'] ?? null];
             } elseif ('failed' === ($status['status'] ?? null)) {

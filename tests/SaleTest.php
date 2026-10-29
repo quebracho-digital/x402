@@ -122,13 +122,18 @@ final class SaleTest extends TestCase
         $this->assertSame('duplicate_settlement', json_decode((string) $again->getBody(), true)['error']);
     }
 
-    public function testFacilitatorDownIs502AndFreesTheClaim(): void
+    public function testFacilitatorDownIs502(): void
     {
-        $request = $this->paid();
         $down = fn () => throw new FacilitatorException('timeout');
-        $this->assertSame(502, $this->middleware($down)->process($request, $this->handler())->getStatusCode());
+        // Down on verify: nothing claimed, the payment still buys.
+        $request = $this->paid();
         $this->assertSame(502, $this->middleware(verify: $down)->process($request, $this->handler())->getStatusCode());
         $this->assertSame(200, $this->middleware(fn () => self::tx())->process($request, $this->handler())->getStatusCode());
+        // Down on settle: it may have sent the transaction, so the claim stays.
+        $request = $this->paid();
+        $this->assertSame(502, $this->middleware($down)->process($request, $this->handler())->getStatusCode());
+        $again = $this->middleware(fn () => self::tx())->process($request, $this->handler());
+        $this->assertSame('duplicate_settlement', json_decode((string) $again->getBody(), true)['error']);
     }
 
     public function testUpfrontSettlesFirstAndKeepsTheReceiptWhateverTheHandlerSays(): void
@@ -138,6 +143,7 @@ final class SaleTest extends TestCase
 
         $response = $this->middleware(fn () => self::tx(), upfront: true)->process($this->paid(true), $this->handler(500));
         $this->assertSame([500, 1], [$response->getStatusCode(), $this->runs]);
+        $this->assertSame('failed_after_settle', end($this->outcomes)->status);
         $this->assertTrue(PaymentHeaders::decode($response->getHeaderLine(PaymentHeaders::RESPONSE))['success']);
     }
 
