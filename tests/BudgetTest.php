@@ -105,10 +105,10 @@ final class BudgetTest extends TestCase
 
     public function testChooseSaysWhyAnOfferIsNotPaid(): void
     {
-        $req = \Quebracho\X402\Networks::requirements('eip155:84532', '0.01', '0x000000000000000000000000000000000000dEaD');
+        $req = Networks::requirements('eip155:84532', '0.01', '0x000000000000000000000000000000000000dEaD');
         $evm = new \Quebracho\X402\EvmExact();
-        $this->assertSame([$evm, null], \Quebracho\X402\Budget::usd('eip155:84532', '1')->choose([$evm], $req, null));
-        $this->assertSame([null, 'no_scheme'], \Quebracho\X402\Budget::usd('eip155:84532', '1')->choose([new \Quebracho\X402\SolanaExact()], $req, null));
-        $this->assertSame([null, 'not_allowed'], \Quebracho\X402\Budget::usd('eip155:84532', '0.001')->choose([$evm], $req, null));
+        $this->assertSame([$evm, null], Budget::usd('eip155:84532', '1')->choose([$evm], $req, null));
+        $this->assertSame([null, 'no_scheme'], Budget::usd('eip155:84532', '1')->choose([new \Quebracho\X402\SolanaExact()], $req, null));
+        $this->assertSame([null, 'not_allowed'], Budget::usd('eip155:84532', '0.001')->choose([$evm], $req, null));
     }
 }

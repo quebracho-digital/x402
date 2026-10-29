@@ -1,10 +1,7 @@
 # quebracho/x402
 
 [x402](https://www.x402.org/) payments for PHP: sign and verify payments, a
-PSR-15 middleware for sellers and a PSR-18 client for buyers. No framework,
-no LLM code. MIT.
-
-> **Testnet only.** No mainnet networks are built in.
+PSR-15 middleware for sellers and a PSR-18 client for buyers. No framework. MIT.
 
 ## Install
 
@@ -117,7 +114,7 @@ a buyer that hangs up early may be charged for an answer it never reads.
 ## Networks
 
 Built in: Base Sepolia, Arc testnet, Ethereum Sepolia, Avalanche Fuji, Polygon
-Amoy. Any EVM token with EIP-3009:
+Amoy. Any EVM token with EIP-3009, mainnets included:
 
 ```php
 Networks::add(chainId: 4202, asset: '0x…', name: 'USDC', version: '2');

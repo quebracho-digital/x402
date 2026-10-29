@@ -14,13 +14,13 @@ use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
-use Quebracho\X402\Settlement;
 use Quebracho\X402\AddressCheck;
 use Quebracho\X402\Budget;
 use Quebracho\X402\EvmExact;
 use Quebracho\X402\FileClaims;
 use Quebracho\X402\Networks;
 use Quebracho\X402\PayingMcpClient;
+use Quebracho\X402\Settlement;
 use Quebracho\X402\Signer;
 use Quebracho\X402\X402McpMiddleware;
 

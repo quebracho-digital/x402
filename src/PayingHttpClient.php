@@ -22,18 +22,18 @@ final class PayingHttpClient implements ClientInterface
 {
     /**
      * @param Scheme[]                  $schemes
-     *                                           The schemes this buyer can pay with, each holding its key
+     *                                             The schemes this buyer can pay with, each holding its key
      * @param Budget                    $budget
-     *                                           Refuses whatever would exceed the spending cap
+     *                                             Refuses whatever would exceed the spending cap
      * @param ?\Closure                 $onPaid
-     *                                           fn(array $req, array $receipt): void — e.g. to log what was spent.
+     *                                             fn(array $req, array $receipt): void — e.g. to log what was spent.
      * @param ?EventDispatcherInterface $events
-     *                                           Dispatches an AddressCheck on each offer's payTo before signing it;
-     *                                           NULL screens nothing
+     *                                             Dispatches an AddressCheck on each offer's payTo before signing it;
+     *                                             NULL screens nothing
      * @param ?\Closure                 $onRefused
-     *                                           fn(array $req, string $reason): void — each offer not paid, and why
-     *                                           (no_scheme, not_allowed, or the screening's reason), e.g. to tell the
-     *                                           user the price it refused
+     *                                             fn(array $req, string $reason): void — each offer not paid, and why
+     *                                             (no_scheme, not_allowed, or the screening's reason), e.g. to tell the
+     *                                             user the price it refused
      */
     public function __construct(
         private readonly ClientInterface $client,

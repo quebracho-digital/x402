@@ -1,0 +1,6 @@
+parameters:
+    level: 6
+    paths: [src]
+    ignoreErrors:
+        # ponytail: payloads are free-form JSON arrays; shapes are checked at runtime
+        - identifier: missingType.iterableValue

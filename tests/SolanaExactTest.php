@@ -99,7 +99,7 @@ final class SolanaExactTest extends TestCase
             // The seller asked for a memo the transaction does not carry.
             'memo missing' => [['extra' => ['memo' => 'invoice-1'] + $req['extra']] + $req, $this->forged($req, fn (string $m) => self::dropLastInstruction($m))],
             // The destination moved to the read-only section: it would fail on chain.
-            'read-only destination' => [$req, $this->forged($req, fn (string $m) => $m[3] === "\x04" ? substr_replace($m, "\x06", 3, 1) : $m)],
+            'read-only destination' => [$req, $this->forged($req, fn (string $m) => "\x04" === $m[3] ? substr_replace($m, "\x06", 3, 1) : $m)],
         ];
         $expected = ['garbage' => 'invalid_payload'];
         foreach (['another seller' => 'recipient_mismatch', 'less money' => 'amount_insufficient', 'another fee payer' => 'transaction_signers', 'other memo' => 'memo_mismatch', 'bad signature' => 'signature', 'fee payer in an instruction' => 'transaction_fee_payer_included_in_instruction_accounts', 'memo missing' => 'memo_mismatch', 'read-only destination' => 'transaction_instructions'] as $case => $reason) {

@@ -26,17 +26,17 @@ final class PayingMcpClient implements ClientInterface
 {
     /**
      * @param Scheme[]                  $schemes
-     *                                           The schemes this buyer can pay with, each holding its key
+     *                                             The schemes this buyer can pay with, each holding its key
      * @param ?\Closure                 $onPaid
-     *                                           fn(string $tool, array $req, array $receipt): void — every receipt of
-     *                                           a paid retry, settled or not, e.g. to show or log it.
+     *                                             fn(string $tool, array $req, array $receipt): void — every receipt of
+     *                                             a paid retry, settled or not, e.g. to show or log it.
      * @param ?EventDispatcherInterface $events
-     *                                           Dispatches an AddressCheck on each offer's payTo before signing it;
-     *                                           NULL screens nothing
+     *                                             Dispatches an AddressCheck on each offer's payTo before signing it;
+     *                                             NULL screens nothing
      * @param ?\Closure                 $onRefused
-     *                                           fn(array $req, string $reason): void — each offer not paid, and why
-     *                                           (no_scheme, not_allowed, or the screening's reason), e.g. to tell the
-     *                                           user the price it refused
+     *                                             fn(array $req, string $reason): void — each offer not paid, and why
+     *                                             (no_scheme, not_allowed, or the screening's reason), e.g. to tell the
+     *                                             user the price it refused
      */
     public function __construct(
         private readonly ClientInterface $client,

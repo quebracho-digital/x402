@@ -96,6 +96,9 @@ final class NearExactTest extends TestCase
         $extra = $payment;
         $extra['payload']['junk'] = 1;
         self::assertSame($key, Settlement::key($extra), 'extra payload fields do not buy a second claim');
+
+        $extra['payload']['authorization'] = ['from' => 'x', 'nonce' => '1'];
+        self::assertSame($key, Settlement::key($extra), 'an EVM-shaped field does not buy a second claim');
     }
 
     /**
@@ -284,18 +287,20 @@ final class NearExactTest extends TestCase
     {
         $f = new \Nyholm\Psr7\Factory\Psr17Factory();
         $sent = [];
-        $node = function (array $result) use (&$sent, $f) { return new \Quebracho\X402\Rpc(new class($result, $sent) implements \Psr\Http\Client\ClientInterface {
-            public function __construct(private array $result, private array &$sent)
-            {
-            }
+        $node = function (array $result) use (&$sent, $f) {
+            return new \Quebracho\X402\Rpc(new class($result, $sent) implements \Psr\Http\Client\ClientInterface {
+                public function __construct(private array $result, private array &$sent)
+                {
+                }
 
-            public function sendRequest(\Psr\Http\Message\RequestInterface $request): \Psr\Http\Message\ResponseInterface
-            {
-                $this->sent[] = json_decode((string) $request->getBody(), true);
+                public function sendRequest(\Psr\Http\Message\RequestInterface $request): \Psr\Http\Message\ResponseInterface
+                {
+                    $this->sent[] = json_decode((string) $request->getBody(), true);
 
-                return new \Nyholm\Psr7\Response(200, [], json_encode(['result' => $this->result]));
-            }
-        }, $f, $f, 'https://rpc.testnet.near.org'); };
+                    return new \Nyholm\Psr7\Response(200, [], json_encode(['result' => $this->result]));
+                }
+            }, $f, $f, 'https://rpc.testnet.near.org');
+        };
         $key = str_repeat("\1", 32);
         $this->assertTrue(NearExact::keyOwner($node(['nonce' => 1, 'permission' => 'FullAccess']))('buyer.testnet', $key));
         $this->assertSame(['request_type' => 'view_access_key', 'finality' => 'final', 'account_id' => 'buyer.testnet', 'public_key' => 'ed25519:'.\Quebracho\X402\Solana::encode($key)], $sent[0]['params']);

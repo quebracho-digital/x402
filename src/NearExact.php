@@ -152,7 +152,7 @@ final class NearExact implements Scheme
           ? base64_decode($payload['signedDelegateAction'], true)
           : null;
 
-        if (!$rawSignedBorsh || !is_string($rawSignedBorsh)) {
+        if (!$rawSignedBorsh) {
             return 'invalid_payload';
         }
 

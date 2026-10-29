@@ -90,7 +90,7 @@ final class Signer
         $sig = (new Secp256k1())->sign(substr($digest, 2), $this->key);
         $hex = fn (\GMP $n) => str_pad(gmp_strval($n, 16), 64, '0', STR_PAD_LEFT);
 
-        return '0x'.$hex($sig->getR()).$hex($sig->getS()).dechex(27 + $sig->getRecoveryParam());
+        return '0x'.$hex($sig->getR()).$hex($sig->getS()).dechex(27 + $sig->getRecoveryParam()); // @phpstan-ignore method.notFound (Secp256k1 returns the concrete signature, which has it)
     }
 
     /**

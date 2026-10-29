@@ -16,14 +16,18 @@ final class Settlement
      * EVM: network + payer + EIP-3009 nonce (re-signing the same nonce must
      * not buy a second delivery). Solana: network + the signed message. NEAR: network + sender + key +
      * nonce. Other
-     * families: the whole payload.
+     * families: the whole payload. The branch follows the network, not the
+     * fields present: schemes ignore fields they do not read, so a NEAR
+     * payment carrying an `authorization` would otherwise get a fresh key.
      */
     public static function key(array $payment): string
     {
-        $auth = $payment['payload']['authorization'] ?? null;
-        $wire = is_string($payment['payload']['transaction'] ?? null) ? base64_decode($payment['payload']['transaction'], true) : false;
+        $network = (string) ($payment['accepted']['network'] ?? '');
+        $family = strstr($network, ':', true);
+        $auth = 'eip155' === $family ? ($payment['payload']['authorization'] ?? null) : null;
+        $wire = 'solana' === $family && is_string($payment['payload']['transaction'] ?? null) ? base64_decode($payment['payload']['transaction'], true) : false;
         $solana = is_string($wire) ? Solana::parse($wire) : null;
-        $near = is_string($payment['payload']['signedDelegateAction'] ?? null) ? base64_decode($payment['payload']['signedDelegateAction'], true) : false;
+        $near = 'near' === $family && is_string($payment['payload']['signedDelegateAction'] ?? null) ? base64_decode($payment['payload']['signedDelegateAction'], true) : false;
         $near = is_string($near) ? NearExact::decodeSignedDelegateAction($near) : null;
         $id = match (true) {
             is_array($auth) => [$payment['accepted']['network'] ?? '', strtolower((string) ($auth['from'] ?? '')), strtolower((string) ($auth['nonce'] ?? ''))],
