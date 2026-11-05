@@ -25,6 +25,8 @@ use Psr\Http\Message\StreamFactoryInterface;
 final class HttpFacilitator implements Facilitator
 {
     public const CIRCLE = 'https://api.circle.com/v1/facilitator/x402';
+    // Casper (casper:casper, casper:casper-test); /verify and /settle take a CSPR.cloud key as $bearer.
+    public const CSPR_CLOUD = 'https://x402-facilitator.cspr.cloud';
 
     private readonly string $url;
 
