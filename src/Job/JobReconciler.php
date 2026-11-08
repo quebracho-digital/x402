@@ -30,10 +30,15 @@ final class JobReconciler
      */
     public const MIN_AGE = 60;
 
+    /**
+     * @param ?JobHolds $holds asked first about a hold job's deposit: the escrow knows for sure whether it
+     *                         holds the money (JobHolds::deposit), where the token's nonce only says "used"
+     */
     public function __construct(
         private readonly JobStore $jobs,
         private readonly JobPayments $payments,
         private readonly PaymentLedger $ledger,
+        private readonly ?JobHolds $holds = null,
     ) {
     }
 
@@ -89,7 +94,12 @@ final class JobReconciler
         $ref = $job->depositRef ?? ['key' => $job->settlementKey];
         // The ledger's claim and 'settling' state for the deposit were written before the row, in the same
         // request (its screening verdict may wait seconds in between): a minute earlier, to be safe.
-        $fate = $this->payments->fate($ref, $job->payer, $job->createdAt - Reconciler::GRACE, $now, true);
+        $held = null === $job->hold || null === $this->holds ? null : $this->holds->deposit($job, $now);
+        $fate = match ($held) {
+            true => JobPayments::SETTLED,
+            false => JobPayments::RELEASED,
+            null => $this->payments->fate($ref, $job->payer, $job->createdAt - Reconciler::GRACE, $now, true),
+        };
         if (JobPayments::RELEASED === $fate) {
             // Nothing moved: no job (FileJobStore::discard deletes only a settling one, so a race cannot lose a paid job).
             return $this->jobs->discard($job->id) ? 'discarded' : 'unknown';

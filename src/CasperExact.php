@@ -42,6 +42,11 @@ final class CasperExact implements Scheme
     ) {
     }
 
+    public function name(): string
+    {
+        return 'exact';
+    }
+
     public function supports(string $network): bool
     {
         return self::MAINNET_NETWORK === $network || self::TESTNET_NETWORK === $network;

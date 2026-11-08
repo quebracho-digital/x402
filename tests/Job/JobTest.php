@@ -17,11 +17,24 @@ final class JobTest extends TestCase
         'running>ready', 'running>failed_ours',
         'ready>delivering',
         'delivering>delivered', 'delivering>ready',
+        // Unreachable without a hold (nothing enters capturing), harmless in the table.
+        'capturing>ready', 'capturing>failed_ours',
     ];
 
-    private function in(string $state): Job
+    /** A job paid with a hold: one payment, captured before the result is handed out for free. */
+    private const ALLOWED_HELD = [
+        'settling>queued',
+        'queued>running', 'queued>failed_ours',
+        'running>capturing', 'running>failed_ours',
+        'capturing>ready', 'capturing>failed_ours',
+        'ready>delivered',
+    ];
+
+    private const HOLD = ['network' => 'eip155:84532', 'info' => ['operator' => '0x1'], 'end' => null, 'transaction' => null, 'sentAt' => null];
+
+    private function in(string $state, ?array $hold = null): Job
     {
-        return new Job(str_repeat('a', 32), '0xPayer', 'key', 'demo_start', $state, 100, 100, ['text' => 'x'], Job::READY === $state || Job::DELIVERING === $state ? ['ok' => true] : null);
+        return new Job(str_repeat('a', 32), '0xPayer', 'key', 'demo_start', $state, 100, 100, ['text' => 'x'], \in_array($state, [Job::READY, Job::DELIVERING, Job::CAPTURING], true) ? ['ok' => true] : null, hold: $hold);
     }
 
     /** Every state to every state: the table is written out here by hand, so a change to Job::TRANSITIONS shows up. */
@@ -31,17 +44,18 @@ final class JobTest extends TestCase
         foreach ($states as $from) {
             foreach ($states as $to) {
                 yield "$from>$to" => [$from, $to, \in_array("$from>$to", self::ALLOWED, true)];
+                yield "held $from>$to" => [$from, $to, \in_array("$from>$to", self::ALLOWED_HELD, true), self::HOLD];
             }
         }
     }
 
     #[DataProvider('pairs')]
-    public function testTheTransitionTable(string $from, string $to, bool $allowed): void
+    public function testTheTransitionTable(string $from, string $to, bool $allowed, ?array $hold = null): void
     {
         if (!$allowed) {
             $this->expectException(IllegalTransition::class);
         }
-        $next = $this->in($from)->to($to, 200, ['ok' => true], 'provider_error');
+        $next = $this->in($from, $hold)->to($to, 200, ['ok' => true], 'provider_error');
 
         self::assertSame($to, $next->state);
         self::assertSame(200, $next->updatedAt);
@@ -50,7 +64,7 @@ final class JobTest extends TestCase
 
     public function testTheStatesAreThePlansSixPlusSettling(): void
     {
-        self::assertSame(['settling', 'queued', 'running', 'ready', 'delivering', 'delivered', 'failed_ours'], array_keys(Job::TRANSITIONS));
+        self::assertSame(['settling', 'queued', 'running', 'capturing', 'ready', 'delivering', 'delivered', 'failed_ours'], array_keys(Job::TRANSITIONS));
     }
 
     public function testReadyNeedsAResult(): void
@@ -154,5 +168,26 @@ final class JobTest extends TestCase
         $job = Job::settling('0xPayer', 'key', 'demo_start', ['text' => 'x'], 100, true)->to(Job::QUEUED, 120)->to(Job::RUNNING, 150)->to(Job::FAILED_OURS, 200, reason: 'our_timeout');
 
         self::assertEquals($job, Job::fromArray(json_decode(json_encode($job->toArray(), \JSON_THROW_ON_ERROR), true)));
+    }
+
+    public function testCapturingNeedsAResult(): void
+    {
+        $this->expectException(IllegalTransition::class);
+        $this->in(Job::RUNNING, self::HOLD)->to(Job::CAPTURING, 200);
+    }
+
+    public function testTheHoldSurvivesTransitionsForgetAndTheStore(): void
+    {
+        $job = $this->in(Job::RUNNING, self::HOLD)->to(Job::CAPTURING, 200, ['ok' => true])->withHold(['end' => 'captured'])->to(Job::READY, 300)->forget();
+
+        self::assertSame('captured', $job->hold['end'] ?? null);
+        self::assertSame(300, $job->updatedAt);
+        self::assertEquals($job, Job::fromArray(json_decode(json_encode($job->toArray()), true)));
+    }
+
+    public function testOnlyAHoldJobHasHoldBookkeeping(): void
+    {
+        $this->expectException(IllegalTransition::class);
+        $this->in(Job::READY)->withHold(['end' => 'captured']);
     }
 }

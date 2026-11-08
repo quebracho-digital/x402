@@ -24,6 +24,8 @@ final class JobStatus
         Job::SETTLING => ['deposit_settling', true, 10],
         Job::QUEUED => ['queued', true, 5],
         Job::RUNNING => ['running', true, 5],
+        // A hold job: done, our capture is on its way to the escrow. The result follows, free.
+        Job::CAPTURING => ['payment_capturing', true, 10],
         Job::READY => ['result_ready', false, null],
         Job::DELIVERING => ['result_settling', true, 10],
         Job::DELIVERED => ['delivered', false, null],

@@ -136,9 +136,9 @@ final class Budget
      */
     public function choose(array $schemes, mixed $req, ?EventDispatcherInterface $events, ?OfacSdn $ofac = null): array
     {
-        $scheme = is_array($req) ? current(array_filter($schemes, fn (Scheme $s) => $s->supports((string) ($req['network'] ?? '')))) : false;
+        $scheme = is_array($req) ? Schemes::pick($schemes, $req) : null;
         $reason = match (true) {
-            false === $scheme => 'no_scheme',
+            null === $scheme => 'no_scheme',
             !$this->allows($req) => 'not_allowed',
             default => AddressCheck::run($events, AddressCheck::PAY_TO, is_string($req['payTo'] ?? null) ? $req['payTo'] : null, $req, $ofac),
         };

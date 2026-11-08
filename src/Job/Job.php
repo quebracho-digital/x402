@@ -15,6 +15,16 @@ namespace Quebracho\X402\Job;
  *                   │          │                    │
  *                   └──────────┴─> failed_ours      └─> ready (the `_result` payment did not settle)
  *
+ * A job paid with an `auth-capture` hold ($hold) is sold in ONE payment: `_start` puts the whole price on
+ * hold in the escrow, the work runs, we capture, and `_result` delivers to the payer for free:
+ *
+ *     settling ─> queued ─> running ─> capturing ─> ready ─> delivered
+ *                   │          │           │
+ *                   └──────────┴───────────┴─> failed_ours (the hold is voided: the buyer pays nothing)
+ *
+ * - capturing: the work is done and its result kept; the capture is being sent (JobHolds). Ready only once
+ *   the escrow paid us: a result is never handed out on a hold that might still go back to the buyer.
+ *
  * - settling: written BEFORE the deposit is settled. A crash between the settle and
  *   the next write leaves this row, keyed by the deposit's Settlement::key, for the reconciler to find.
  *   Nothing runs from here: only a confirmed settle moves it on.
@@ -35,6 +45,7 @@ final class Job
     public const DELIVERING = 'delivering';
     public const DELIVERED = 'delivered';
     public const FAILED_OURS = 'failed_ours';
+    public const CAPTURING = 'capturing';
 
     /**
      * Seconds a delivered result stays on the job for its payer to read again for free (the answer of a paid call may be lost on the way back): enough
@@ -64,8 +75,9 @@ final class Job
     public const TRANSITIONS = [
         self::SETTLING => [self::QUEUED],
         self::QUEUED => [self::RUNNING, self::FAILED_OURS],
-        self::RUNNING => [self::READY, self::FAILED_OURS],
-        self::READY => [self::DELIVERING],
+        self::RUNNING => [self::READY, self::FAILED_OURS, self::CAPTURING],
+        self::CAPTURING => [self::READY, self::FAILED_OURS],
+        self::READY => [self::DELIVERING, self::DELIVERED],
         self::DELIVERING => [self::DELIVERED, self::READY],
         self::DELIVERED => [],
         self::FAILED_OURS => [],
@@ -81,21 +93,25 @@ final class Job
         'invalid_reply',  // it answered, but not what we can deliver
         'our_timeout',    // the work outlived its slot (the janitor found it stale)
         'our_daily_cap',  // our own daily budget ran out after the deposit was taken
+        'capture_missed', // a hold job: the hold went back to the buyer (voided, or reclaimed after its deadline) before we captured it
     ];
 
     /**
-     * @param string                                                                      $payer         who paid the deposit (authorization.from); `_result` requires the same payer
-     * @param string                                                                      $settlementKey Settlement::key of the deposit: `_start` with the same payment gets this job back
-     * @param string                                                                      $tool          the `_start` tool that sold it: which work to run
-     * @param ?array                                                                      $params        that tool's arguments, kept only until the work has run (buyer text: off disk after)
-     * @param ?array                                                                      $result        the work's output, from ready until it is delivered
-     * @param ?string                                                                     $reason        why it failed (failed_ours), one of FAILURES
-     * @param bool                                                                        $sensitive     the buyer asked that its answer not be kept: `_result`'s answer stays out of the
-     *                                                                                                   payment ledger too (kept here, as the input that said so is gone by then)
-     * @param ?array{key: string, network?: ?string, nonce?: ?string, validBefore?: ?int} $depositRef    what the reconciler needs to ask the chain about the deposit: network, nonce,
-     *                                                                                                   validBefore (Quebracho\X402\Job\JobPayments::ref), never the signature
-     * @param ?array{key: string, network?: ?string, nonce?: ?string, validBefore?: ?int} $resultRef     the same for the `_result` payment being settled, plus its Settlement::key:
-     *                                                                                                   set on ready > delivering, kept once delivered, gone when the job is ready again
+     * @param string                                                                                                     $payer         who paid the deposit (authorization.from); `_result` requires the same payer
+     * @param string                                                                                                     $settlementKey Settlement::key of the deposit: `_start` with the same payment gets this job back
+     * @param string                                                                                                     $tool          the `_start` tool that sold it: which work to run
+     * @param ?array                                                                                                     $params        that tool's arguments, kept only until the work has run (buyer text: off disk after)
+     * @param ?array                                                                                                     $result        the work's output, from ready until it is delivered
+     * @param ?string                                                                                                    $reason        why it failed (failed_ours), one of FAILURES
+     * @param bool                                                                                                       $sensitive     the buyer asked that its answer not be kept: `_result`'s answer stays out of the
+     *                                                                                                                                  payment ledger too (kept here, as the input that said so is gone by then)
+     * @param ?array{key: string, network?: ?string, nonce?: ?string, validBefore?: ?int}                                $depositRef    what the reconciler needs to ask the chain about the deposit: network, nonce,
+     *                                                                                                                                  validBefore (Quebracho\X402\Job\JobPayments::ref), never the signature
+     * @param ?array{key: string, network?: ?string, nonce?: ?string, validBefore?: ?int}                                $resultRef     the same for the `_result` payment being settled, plus its Settlement::key:
+     *                                                                                                                                  set on ready > delivering, kept once delivered, gone when the job is ready again
+     * @param ?array{network: string, info: array<string, string|int>, end: ?string, transaction: ?string, sentAt: ?int} $hold
+     *                                                                                                                                  an `auth-capture` job (JobHolds::of): the escrow's PaymentInfo, how the hold ended
+     *                                                                                                                                  (captured, released) and the last capture or void sent; NULL for a two-payment job
      */
     public function __construct(
         public readonly string $id,
@@ -111,6 +127,7 @@ final class Job
         public readonly bool $sensitive = false,
         public readonly ?array $depositRef = null,
         public readonly ?array $resultRef = null,
+        public readonly ?array $hold = null,
     ) {
         if (!isset(self::TRANSITIONS[$state])) {
             throw new \InvalidArgumentException("Unknown job state $state.");
@@ -121,11 +138,12 @@ final class Job
      * A new job, before its deposit is settled. The id is 128 random bits: it is what the buyer holds
      * to ask for the job, so it must not be guessable.
      *
-     * @param ?array{key: string, network?: ?string, nonce?: ?string, validBefore?: ?int} $depositRef Quebracho\X402\Job\JobPayments::ref of the deposit
+     * @param ?array{key: string, network?: ?string, nonce?: ?string, validBefore?: ?int}                                $depositRef Quebracho\X402\Job\JobPayments::ref of the deposit
+     * @param ?array{network: string, info: array<string, string|int>, end: ?string, transaction: ?string, sentAt: ?int} $hold       JobHolds::of the deposit, when it is a hold
      */
-    public static function settling(string $payer, string $settlementKey, string $tool, array $params, int $now, bool $sensitive = false, ?array $depositRef = null): self
+    public static function settling(string $payer, string $settlementKey, string $tool, array $params, int $now, bool $sensitive = false, ?array $depositRef = null, ?array $hold = null): self
     {
-        return new self(bin2hex(random_bytes(16)), self::normalize($payer), $settlementKey, $tool, self::SETTLING, $now, $now, $params, sensitive: $sensitive, depositRef: $depositRef);
+        return new self(bin2hex(random_bytes(16)), self::normalize($payer), $settlementKey, $tool, self::SETTLING, $now, $now, $params, sensitive: $sensitive, depositRef: $depositRef, hold: $hold);
     }
 
     /**
@@ -148,9 +166,15 @@ final class Job
         if (!\in_array($state, self::TRANSITIONS[$this->state], true)) {
             throw new IllegalTransition("Job {$this->id}: {$this->state} cannot go to $state.");
         }
+        // The two ways of paying do not mix: a hold job is paid before it runs (capturing, then a free
+        // delivery), a two-payment job when its result is bought (delivering).
+        $held = null !== $this->hold;
+        if ($held ? (self::RUNNING === $this->state && self::READY === $state) || \in_array(self::DELIVERING, [$state, $this->state], true) : self::CAPTURING === $state || (self::READY === $this->state && self::DELIVERED === $state)) {
+            throw new IllegalTransition("Job {$this->id}: {$this->state} cannot go to $state when ".($held ? 'paid with a hold.' : 'paid in two payments.'));
+        }
         $result ??= $this->result;
-        if (self::READY === $state && null === $result) {
-            throw new IllegalTransition("Job {$this->id}: ready needs a result.");
+        if (\in_array($state, [self::READY, self::CAPTURING], true) && null === $result) {
+            throw new IllegalTransition("Job {$this->id}: $state needs a result.");
         }
         if (self::FAILED_OURS === $state && !\in_array($reason, self::FAILURES, true)) {
             throw new IllegalTransition("Job {$this->id}: failed_ours needs a reason from Job::FAILURES.");
@@ -167,7 +191,22 @@ final class Job
             default => $this->resultRef,
         };
 
-        return new self($this->id, $this->payer, $this->settlementKey, $this->tool, $state, $this->createdAt, $now, $params, $result, self::FAILED_OURS === $state ? $reason : null, $this->sensitive, $this->depositRef, $resultRef);
+        return new self($this->id, $this->payer, $this->settlementKey, $this->tool, $state, $this->createdAt, $now, $params, $result, self::FAILED_OURS === $state ? $reason : null, $this->sensitive, $this->depositRef, $resultRef, $this->hold);
+    }
+
+    /**
+     * The same job with its hold's bookkeeping changed (the capture or void sent, how the hold ended). Not a
+     * transition: the state and its time stay.
+     *
+     * @param array{end?: ?string, transaction?: ?string, sentAt?: ?int} $change
+     */
+    public function withHold(array $change): self
+    {
+        if (null === $this->hold) {
+            throw new IllegalTransition("Job {$this->id} has no hold.");
+        }
+
+        return new self($this->id, $this->payer, $this->settlementKey, $this->tool, $this->state, $this->createdAt, $this->updatedAt, $this->params, $this->result, $this->reason, $this->sensitive, $this->depositRef, $this->resultRef, $change + $this->hold);
     }
 
     /**
@@ -178,7 +217,7 @@ final class Job
      */
     public function forget(): self
     {
-        return new self($this->id, $this->payer, $this->settlementKey, $this->tool, $this->state, $this->createdAt, $this->updatedAt, null, null, $this->reason, $this->sensitive, $this->depositRef, $this->resultRef);
+        return new self($this->id, $this->payer, $this->settlementKey, $this->tool, $this->state, $this->createdAt, $this->updatedAt, null, null, $this->reason, $this->sensitive, $this->depositRef, $this->resultRef, $this->hold);
     }
 
     /**
@@ -204,7 +243,7 @@ final class Job
 
     public static function fromArray(array $row): self
     {
-        return new self($row['id'], $row['payer'], $row['settlementKey'], $row['tool'], $row['state'], $row['createdAt'], $row['updatedAt'], $row['params'] ?? null, $row['result'] ?? null, $row['reason'] ?? null, $row['sensitive'] ?? false, $row['depositRef'] ?? null, $row['resultRef'] ?? null);
+        return new self($row['id'], $row['payer'], $row['settlementKey'], $row['tool'], $row['state'], $row['createdAt'], $row['updatedAt'], $row['params'] ?? null, $row['result'] ?? null, $row['reason'] ?? null, $row['sensitive'] ?? false, $row['depositRef'] ?? null, $row['resultRef'] ?? null, $row['hold'] ?? null);
     }
 
     private static function normalize(string $payer): string

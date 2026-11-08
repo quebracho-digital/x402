@@ -132,6 +132,11 @@ final class PayingHttpClientTest extends TestCase
     public function testAPayThatThrowsSpendsNothing(): void
     {
         $failing = new class implements Scheme {
+            public function name(): string
+            {
+                return 'exact';
+            }
+
             public function supports(string $network): bool
             {
                 return true;
@@ -202,6 +207,11 @@ final class PayingHttpClientTest extends TestCase
     {
         // Signs, but into something no header can carry: it never leaves this process.
         $unsendable = new class implements Scheme {
+            public function name(): string
+            {
+                return 'exact';
+            }
+
             public function supports(string $network): bool
             {
                 return true;
@@ -250,6 +260,11 @@ final class PayingHttpClientTest extends TestCase
     {
         $evm = new EvmExact($this->key());
         $scheme = new class($evm) implements Scheme {
+            public function name(): string
+            {
+                return 'exact';
+            }
+
             public int $signed = 0;
 
             public function __construct(private EvmExact $evm)

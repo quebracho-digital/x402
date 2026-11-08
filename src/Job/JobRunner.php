@@ -16,11 +16,14 @@ final class JobRunner
     /**
      * @param iterable<JobWork> $works every job tool's work
      * @param ?\Closure(): int  $clock
+     * @param ?JobHolds         $holds captures or voids a job paid with a hold once its work ended; without it, such a
+     *                                 job stays `capturing` (or its hold open) until the cron's JobHolds::sweep
      */
     public function __construct(
         private readonly JobStore $jobs,
         iterable $works,
         private readonly ?\Closure $clock = null,
+        private readonly ?JobHolds $holds = null,
     ) {
         foreach ($works as $work) {
             $this->byTool[$work::start()] = $work;
@@ -51,7 +54,8 @@ final class JobRunner
                 throw new JobFailed('provider_error');
             }
             $result = $work->run($job->params ?? []);
-            $end = fn (Job $j) => $j->to(Job::READY, $this->now(), $result);
+            // Paid with a hold: the result waits in `capturing` until the escrow paid us.
+            $end = fn (Job $j) => $j->to(null === $j->hold ? Job::READY : Job::CAPTURING, $this->now(), $result);
         } catch (JobFailed $e) {
             $end = fn (Job $j) => $j->to(Job::FAILED_OURS, $this->now(), reason: $e->reason);
         } catch (\Throwable) {
@@ -59,11 +63,14 @@ final class JobRunner
             $end = fn (Job $j) => $j->to(Job::FAILED_OURS, $this->now(), reason: 'provider_error');
         }
         try {
-            return $this->jobs->update($id, $end);
+            $ended = $this->jobs->update($id, $end);
         } catch (IllegalTransition) {
             // The janitor gave up on it while it ran (failed_ours, final): the late answer is dropped.
-            return $this->jobs->get($id) ?? throw new \OutOfBoundsException("No job $id.");
+            $ended = $this->jobs->get($id) ?? throw new \OutOfBoundsException("No job $id.");
         }
+
+        // Capture (done) or void (failed by us) the hold now, not at the next cron: the buyer is polling.
+        return null === $this->holds ? $ended : $this->holds->finish($ended);
     }
 
     private function now(): int

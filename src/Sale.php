@@ -64,11 +64,13 @@ final class Sale
 
     /**
      * Settles before the handler runs (extra.paymentFlow = upfront), for
-     * handlers that are expensive or cannot be undone.
+     * handlers that are expensive or cannot be undone. An `auth-capture` payment always does: its settle is
+     * the `authorize` that puts the money on hold (the spec's escrow flow, "settle → resource → settle"); the
+     * capture or void comes later, out of band (AuthCaptureOperator).
      */
     public function upfront(): bool
     {
-        return 'upfront' === ($this->req['extra']['paymentFlow'] ?? null);
+        return 'upfront' === ($this->req['extra']['paymentFlow'] ?? null) || AuthCapture::SCHEME === ($this->req['scheme'] ?? null);
     }
 
     /**
@@ -380,8 +382,8 @@ final class Sale
 
     private function scheme(): Scheme
     {
-        return current(array_filter($this->schemes, fn (Scheme $s) => $s->supports($this->req['network'])))
-          ?: throw new \LogicException("No scheme verifies {$this->req['network']}.");
+        return Schemes::pick($this->schemes, $this->req)
+          ?? throw new \LogicException("No scheme verifies {$this->req['scheme']} on {$this->req['network']}.");
     }
 
     /**
@@ -557,13 +559,13 @@ final class Sale
         }
         // ponytail: EVM only (EIP-3009 validBefore). Reachable: a Solana or NEAR
         // payment for a tool that declares a duration has no expiry we can read.
-        if (!$scheme instanceof EvmExact) {
+        if (!$scheme instanceof EvmExact && !$scheme instanceof EvmAuthCapture) {
             return 'unsupported_scheme';
         }
 
-        // verify() passed, so validBefore is a canonical decimal; same clock as verify().
+        // verify() passed, so validBefore is a canonical decimal; same clock as verify(). Both schemes use the 6 s floor.
         return (int) $this->payment['payload']['authorization']['validBefore'] - $scheme->now() < $this->duration + EvmExact::SLACK
-          ? 'invalid_exact_evm_payload_authorization_valid_before' : null;
+          ? ($scheme instanceof EvmExact ? 'invalid_exact_evm_payload_authorization_valid_before' : 'invalid_auth_capture_evm_authorization_expired') : null;
     }
 
     private function free(): void

@@ -474,6 +474,11 @@ final class X402McpMiddlewareTest extends TestCase
         $request = $this->paidCall();
         // A scheme for the same network that is not EvmExact: no expiry Sale can read.
         $other = new class implements Scheme {
+            public function name(): string
+            {
+                return 'exact';
+            }
+
             public function supports(string $network): bool
             {
                 return true;

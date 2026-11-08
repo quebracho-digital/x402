@@ -118,6 +118,11 @@ final class PayingMcpClientTest extends TestCase
     public function testAPayThatThrowsSpendsNothing(): void
     {
         $failing = new class implements Scheme {
+            public function name(): string
+            {
+                return 'exact';
+            }
+
             public function supports(string $network): bool
             {
                 return true;

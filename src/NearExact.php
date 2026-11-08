@@ -67,6 +67,11 @@ final class NearExact implements Scheme
         };
     }
 
+    public function name(): string
+    {
+        return 'exact';
+    }
+
     public function supports(string $network): bool
     {
         return self::TESTNET_NETWORK === $network;

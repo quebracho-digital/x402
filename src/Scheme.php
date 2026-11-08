@@ -16,6 +16,11 @@ namespace Quebracho\X402;
 interface Scheme
 {
     /**
+     * The x402 scheme name it handles, as offers spell it: "exact" or "auth-capture".
+     */
+    public function name(): string;
+
+    /**
      * Whether this scheme handles a CAIP-2 network, e.g. "eip155:84532".
      */
     public function supports(string $network): bool;
