@@ -26,6 +26,8 @@ final class HttpFacilitator implements Facilitator
      * @deprecated since 0.2: use CircleFacilitator::URL with CircleFacilitator. Kept so 0.1.x callers still compile.
      */
     public const CIRCLE = CircleFacilitator::URL;
+    // Casper (casper:casper, casper:casper-test); /verify and /settle take a CSPR.cloud key as $bearer.
+    public const CSPR_CLOUD = 'https://x402-facilitator.cspr.cloud';
 
     private readonly string $url;
 

@@ -172,6 +172,26 @@ final class Networks
     }
 
     /**
+     * Adds a CEP-18 token on Casper (casper:casper or casper:casper-test).
+     *
+     * $packageHash is the token's contract package hash (64 hex, no prefix);
+     * $name and $version its EIP-712 domain. Not built in: read them from the
+     * token (wCSPR has 9 decimals), since a wrong one makes every signature invalid.
+     *
+     * @throws \InvalidArgumentException
+     *                                   Not a Casper network or not a package hash
+     */
+    public static function addCasper(string $network, string $packageHash, string $name, string $version, int $decimals = CasperExact::DECIMALS, string $label = '', string $rpc = '', string $explorer = ''): string
+    {
+        if (!(new CasperExact())->supports($network) || !CasperExact::isPackageHash($packageHash) || '' === $name || '' === $version) {
+            throw new \InvalidArgumentException('A Casper network is casper:casper or casper:casper-test, a package hash 64 lowercase hex, and the domain names a token.');
+        }
+        self::$added[$network] = ['label' => $label ?: $network, 'asset' => $packageHash, 'decimals' => $decimals, 'extra' => ['name' => $name, 'version' => $version], 'rpc' => $rpc, 'explorer' => $explorer];
+
+        return $network;
+    }
+
+    /**
      * Adds any EVM chain whose token implements EIP-3009.
      *
      * $name and $version are the token's EIP-712 domain: read them from the
@@ -234,7 +254,12 @@ final class Networks
     {
         $token = self::get($network);
         $evm = str_starts_with($network, 'eip155:');
-        if ($evm ? !preg_match('/^0x[0-9a-fA-F]{40}$/', $payTo) : !self::isSolanaAddress($payTo)) {
+        $valid = match (true) {
+            $evm => (bool) preg_match('/^0x[0-9a-fA-F]{40}$/', $payTo),
+            str_starts_with($network, 'casper:') => CasperExact::isAddress($payTo),
+            default => self::isSolanaAddress($payTo),
+        };
+        if (!$valid) {
             throw new \InvalidArgumentException("Not a payTo address on $network: $payTo.");
         }
 

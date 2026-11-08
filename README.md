@@ -561,6 +561,10 @@ to a browser wallet. The offer needs `extra.feePayer` (`HttpFacilitator::feePaye
 A NEAR seller that screens payers passes `keyOwner: NearExact::keyOwner($rpc)`
 (the node's `view_access_key`): without it the payer is unproven and screening
 rejects it.
+`CasperExact` (`casper:casper`, `casper:casper-test`) is experimental, see
+[docs/casper.md](docs/casper.md): a CEP-18 authorization signed as Casper
+EIP-712, settled by `HttpFacilitator::CSPR_CLOUD`; register the token with
+`Networks::addCasper`.
 
 ## Protections, layer by layer
 

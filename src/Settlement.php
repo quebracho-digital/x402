@@ -32,7 +32,8 @@ final class Settlement
     {
         $network = (string) ($payment['accepted']['network'] ?? '');
         $family = strstr($network, ':', true);
-        $auth = 'eip155' === $family ? ($payment['payload']['authorization'] ?? null) : null;
+        // Casper's CEP-18 authorization spends (from, nonce) once, like EIP-3009.
+        $auth = 'eip155' === $family || 'casper' === $family ? ($payment['payload']['authorization'] ?? null) : null;
         $wire = 'solana' === $family && is_string($payment['payload']['transaction'] ?? null) ? base64_decode($payment['payload']['transaction'], true) : false;
         $solana = is_string($wire) ? Solana::parse($wire) : null;
         $near = 'near' === $family && is_string($payment['payload']['signedDelegateAction'] ?? null) ? base64_decode($payment['payload']['signedDelegateAction'], true) : false;
