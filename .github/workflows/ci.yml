@@ -1,0 +1,22 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: gmp, sodium
+          coverage: none
+      - run: composer validate --strict
+      - run: composer install --no-interaction --no-progress
+      - run: composer audit
+      - run: vendor/bin/phpunit
+      - run: vendor/bin/phpstan analyse --no-progress -c phpstan.dist.neon
+      - run: vendor/bin/php-cs-fixer fix --dry-run --diff
+      - run: vendor/bin/composer-dependency-analyser
