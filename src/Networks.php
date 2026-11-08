@@ -186,6 +186,12 @@ final class Networks
         if (!(new CasperExact())->supports($network) || !CasperExact::isPackageHash($packageHash) || '' === $name || '' === $version) {
             throw new \InvalidArgumentException('A Casper network is casper:casper or casper:casper-test, a package hash 64 lowercase hex, and the domain names a token.');
         }
+        if ($decimals < 0 || $decimals > 38) {
+            throw new \InvalidArgumentException("A token has 0 to 38 decimals: $decimals.");
+        }
+        if (isset(self::$added[$network]) && self::$added[$network]['asset'] !== $packageHash) {
+            throw new \InvalidArgumentException("$network already has another token; call Networks::reset() first (a Budget cap would change meaning).");
+        }
         self::$added[$network] = ['label' => $label ?: $network, 'asset' => $packageHash, 'decimals' => $decimals, 'extra' => ['name' => $name, 'version' => $version], 'rpc' => $rpc, 'explorer' => $explorer];
 
         return $network;
@@ -252,8 +258,38 @@ final class Networks
      */
     public static function requirements(string $network, string $usd, string $payTo, int $timeout = self::TIMEOUT): array
     {
+        return self::offer($network, $usd, $payTo, $timeout, false);
+    }
+
+    /**
+     * One PaymentRequirements for an amount of a Casper token, in the token's own units.
+     *
+     * The wCSPR on Casper is not worth a dollar, so a price in dollars would be
+     * charged in CSPR: `requirements()` refuses it, and a seller prices in the
+     * token here ('1.5' is 1.5 CSPR). The offer is `upfront`: settle before the handler.
+     *
+     * @throws \InvalidArgumentException
+     *                                   Not a Casper network, or an amount the token cannot represent
+     */
+    public static function requirementsInToken(string $network, string $amount, string $payTo, int $timeout = self::TIMEOUT): array
+    {
+        return self::offer($network, $amount, $payTo, $timeout, true);
+    }
+
+    private static function offer(string $network, string $usd, string $payTo, int $timeout, bool $inToken): array
+    {
         $token = self::get($network);
         $evm = str_starts_with($network, 'eip155:');
+        $casper = str_starts_with($network, 'casper:');
+        if ($casper && !$inToken) {
+            throw new \InvalidArgumentException("The token on $network is not priced in dollars: use Networks::requirementsInToken().");
+        }
+        if ($inToken && !$casper) {
+            throw new \InvalidArgumentException("requirementsInToken() is for Casper networks, not $network.");
+        }
+        if ($casper && !CasperExact::validTimeout($timeout)) {
+            throw new \InvalidArgumentException('A Casper offer lives at most '.CasperExact::MAX_TIMEOUT." s, so a replay stays inside the claim: $timeout.");
+        }
         $valid = match (true) {
             $evm => (bool) preg_match('/^0x[0-9a-fA-F]{40}$/', $payTo),
             str_starts_with($network, 'casper:') => CasperExact::isAddress($payTo),
@@ -270,7 +306,8 @@ final class Networks
             'asset' => $token['asset'],
             'payTo' => $evm ? Signer::checksum($payTo) : $payTo,
             'maxTimeoutSeconds' => $timeout,
-            'extra' => $token['extra'],
+            // The facilitator verifies signature and window only, not the balance: settle first.
+            'extra' => $casper ? $token['extra'] + ['paymentFlow' => 'upfront'] : $token['extra'],
         ];
     }
 
