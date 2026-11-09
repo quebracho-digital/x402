@@ -28,7 +28,8 @@
         "symfony/http-client": "^7.3"
     },
     "suggest": {
-        "ext-redis": "RedisLedger: one payment ledger for several hosts"
+        "ext-redis": "RedisLedger: one payment ledger for several hosts",
+        "ext-posix": "Stop: checks that the flag file is owned by the user running PHP"
     },
     "autoload": { "psr-4": { "Quebracho\\X402\\": "src/" } },
     "autoload-dev": { "psr-4": { "Quebracho\\X402\\Tests\\": "tests/" } },
