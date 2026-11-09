@@ -79,6 +79,8 @@ final class X402McpMiddleware implements MiddlewareInterface
      * @param ?OfacSdn                  $ofac
      *                                             OFAC's SDN list, asked first about every address (AddressCheck), with or without $events;
      *                                             NULL: the one shipped with the library. Pass new OfacSdn($file) with the file OfacSdn::sync() keeps fresh
+     * @param ?Stop                     $stop
+     *                                             While its file exists the seller answers payments_paused (JSON-RPC -32000) before verifying or charging anything. NULL: no stop switch
      */
     public function __construct(
         private readonly array $schemes,
@@ -98,6 +100,7 @@ final class X402McpMiddleware implements MiddlewareInterface
         private readonly ?\Closure $lookup = null,
         private readonly ?\Closure $sensitive = null,
         private readonly ?OfacSdn $ofac = null,
+        private readonly ?Stop $stop = null,
     ) {
     }
 
@@ -142,6 +145,11 @@ final class X402McpMiddleware implements MiddlewareInterface
 
         $payment = $message['params']['_meta'][self::PAYMENT] ?? null;
         if (!is_array($payment)) {
+            // Paused: say so now, so the buyer does not sign a payment this seller would not take.
+            if ($this->stop?->engaged()) {
+                return $this->paused($id);
+            }
+
             return $this->required($id, $accepts, $resource, 'Payment required to access this resource');
         }
         // The offer the buyer says it took, among ours: never its own copy.
@@ -171,6 +179,11 @@ final class X402McpMiddleware implements MiddlewareInterface
             }
             // ponytail: verify runs before the MCP session check and costs an
             // ecrecover; rate-limit the route where it is deployed.
+            // Stopped by hand: nothing new is verified, claimed, run or charged. A payment the ledger already holds
+            // (replayed above, or an upfront one whose tool still has to run) is delivered: it was paid.
+            if (null === $run && $this->stop?->engaged()) {
+                return $this->paused($id);
+            }
             $reason = null === $run ? $sale->admit() : null;
         } catch (LedgerUnavailableException) {
             // Before the tool: nothing charged, nothing run.
@@ -201,6 +214,12 @@ final class X402McpMiddleware implements MiddlewareInterface
                 $sale->abandon(null);
 
                 return $this->required($id, $accepts, $resource, 'ledger_unavailable');
+            }
+            // Switched on since the check in process(): nothing was sent yet, so nothing is.
+            if ($this->stop?->engaged()) {
+                $sale->abandon(null);
+
+                return $this->paused($id);
             }
             // Money first; once it moved, the receipt goes with whatever the tool answers.
             $receipt = $sale->settle();
@@ -248,6 +267,12 @@ final class X402McpMiddleware implements MiddlewareInterface
                     $sale->abandon(200);
 
                     return $out;
+                }
+                if ($this->stop?->engaged()) {
+                    // Switched on while the tool ran: nothing charged, its answer is withheld.
+                    $sale->abandon(200);
+
+                    return ['receipt' => ['success' => false, 'errorReason' => Stop::REASON]];
                 }
                 if (!$sale->intend($this->ledger, ['status' => 'settling', 'id' => $id])) {
                     // Refused before the settle: nothing charged, the tool's answer is withheld.
@@ -410,6 +435,11 @@ final class X402McpMiddleware implements MiddlewareInterface
         }
 
         return [];
+    }
+
+    private function paused(mixed $id): ResponseInterface
+    {
+        return $this->json(['jsonrpc' => '2.0', 'id' => $id, 'error' => ['code' => -32000, 'message' => 'Payments are paused', 'data' => ['reason' => Stop::REASON]]]);
     }
 
     private function required(mixed $id, array $accepts, array $resource, string $error): ResponseInterface
