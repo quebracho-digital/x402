@@ -19,7 +19,7 @@ final class Networks
     // Mainnets: Base, Solana and Arc (paying on them costs real money). Ethereum is here to be *read*: the
     // blacklist of its USDC and USDT is an eth_call, which costs no gas. Paying on
     // it is possible but a settlement there costs real gas. The testnets are for the demo.
-    // Any other chain is registered by the site with add() (see "Add a blockchain" in the README).
+    // Any other chain is registered by the site with add() (see "Add a blockchain" in docs/networks.md).
     public const ALL = [
         'eip155:8453' => [
             'label' => 'Base (USDC)',
