@@ -90,3 +90,28 @@ who signed) is "paid"; anything else withholds the output.
   Use `ChainFacilitator` to carry that yourself.
 - Concentration: one facilitator URL is one point of failure. The library takes
   any `Facilitator`, so a fallback is a few lines of the caller's.
+
+## Stop switch
+
+A file that stops all payments while it exists. Give the same one to the seller's middleware and to the buyer's
+client (`stop:` / the last constructor argument) and one command stops both:
+
+```php
+$stop = new Quebracho\X402\Stop('/var/run/myapp/x402.stop');
+$stop->engage('suspected key leak');   // or just: touch /var/run/myapp/x402.stop
+$stop->release();
+```
+
+- Seller: a paid request is answered `payments_paused` (HTTP 503, or JSON-RPC -32000 for MCP) before anything
+  new is verified, claimed or run, and again right before each settle: a request that was already running when
+  the switch went on is not charged and its answer is withheld. Free requests and free tools keep working.
+- A payment the ledger already holds is still delivered while paused (a replay, or an upfront tool that still
+  owes its answer): the buyer paid for it and its signature may expire before the switch is released.
+- Buyer: no offer is reserved or signed. The caller sees the 402 itself, and `PurchaseOutcome` reports
+  `refused` with the reason `payments_paused`. It is checked again after the payee screening, which can take time.
+- It is checked on every request, so it works in long-running workers. Nothing sets it by itself.
+- It does not recall a payment already signed or a settle already sent.
+- Use an absolute path in a directory only the application's user can write to, never `/tmp`: `engage()` refuses
+  a link, a file somebody else owns and a directory others can write to. Anything at the path (even a directory)
+  counts as engaged, and so does a flag directory the process cannot search, so a mistake pauses payments
+  rather than silently leaving them on.

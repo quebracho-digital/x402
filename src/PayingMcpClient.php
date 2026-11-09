@@ -40,6 +40,8 @@ final class PayingMcpClient implements ClientInterface
      * @param ?OfacSdn                  $ofac
      *                                             OFAC's SDN list, asked first about every address (AddressCheck), with or without $events;
      *                                             NULL: the one shipped with the library. Pass new OfacSdn($file) with the file OfacSdn::sync() keeps fresh
+     * @param ?Stop                     $stop
+     *                                             While its file exists nothing is signed: the offer is refused as payments_paused and the caller sees the PaymentRequired itself. NULL: no stop switch
      */
     public function __construct(
         private readonly ClientInterface $client,
@@ -50,6 +52,7 @@ final class PayingMcpClient implements ClientInterface
         private readonly ?EventDispatcherInterface $events = null,
         private readonly ?\Closure $onRefused = null,
         private readonly ?OfacSdn $ofac = null,
+        private readonly ?Stop $stop = null,
     ) {
     }
 
@@ -69,6 +72,17 @@ final class PayingMcpClient implements ClientInterface
         if (empty($result['isError']) || !is_array($required) || ($required['x402Version'] ?? null) !== 2) {
             return $response;
         }
+        if ($this->stop?->engaged()) {
+            // Stopped by hand: nothing is reserved or signed, the caller sees the PaymentRequired itself.
+            Events::report($this->events, new PurchaseOutcome(PurchaseOutcome::REFUSED, [], Stop::REASON, tool: (string) $call['params']['name']));
+            try {
+                $this->onRefused?->__invoke([], Stop::REASON);
+            } catch (\Throwable) {
+                // ponytail: as for any refusal, a failing callback is dropped.
+            }
+
+            return $response;
+        }
 
         // Expired signatures the seller never used no longer count.
         $this->budget->reclaim($this->events);
@@ -80,12 +94,20 @@ final class PayingMcpClient implements ClientInterface
             if (null === $reason && !$this->budget->reserve($req)) {
                 $reason = 'not_allowed';
             }
+            // Switched on while the screening ran: the reservation is given back and nothing is signed.
+            if (null === $reason && $this->stop?->engaged()) {
+                $this->budget->release($req);
+                $reason = Stop::REASON;
+            }
             if (null !== $reason) {
                 Events::report($this->events, new PurchaseOutcome(PurchaseOutcome::REFUSED, is_array($req) ? $req : [], $reason, tool: (string) $call['params']['name']));
                 try {
                     $this->onRefused?->__invoke(is_array($req) ? $req : [], $reason);
                 } catch (\Throwable) {
                     // ponytail: a failing refusal callback is dropped; the PaymentRequired still goes to the caller.
+                }
+                if (Stop::REASON === $reason) {
+                    return $response;
                 }
                 continue;
             }

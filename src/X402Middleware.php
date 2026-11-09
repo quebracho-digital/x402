@@ -78,6 +78,8 @@ final class X402Middleware implements MiddlewareInterface
      * @param ?OfacSdn                  $ofac
      *                                             OFAC's SDN list, asked first about every address (AddressCheck), with or without $events;
      *                                             NULL: the one shipped with the library. Pass new OfacSdn($file) with the file OfacSdn::sync() keeps fresh
+     * @param ?Stop                     $stop
+     *                                             While its file exists the seller answers payments_paused (503) before verifying or charging anything. NULL: no stop switch
      */
     public function __construct(
         private readonly array $schemes,
@@ -94,6 +96,7 @@ final class X402Middleware implements MiddlewareInterface
         private readonly ?\Closure $lookup = null,
         private readonly ?\Closure $sensitive = null,
         private readonly ?OfacSdn $ofac = null,
+        private readonly ?Stop $stop = null,
     ) {
     }
 
@@ -107,6 +110,11 @@ final class X402Middleware implements MiddlewareInterface
 
         $header = $request->getHeaderLine(PaymentHeaders::SIGNATURE);
         if ('' === $header) {
+            // Paused: say so now, so the buyer does not sign a payment this seller would not take.
+            if ($this->stop?->engaged()) {
+                return $this->paused();
+            }
+
             return $this->required($accepts, $resource, 'PAYMENT-SIGNATURE header is required');
         }
         try {
@@ -138,6 +146,11 @@ final class X402Middleware implements MiddlewareInterface
                     $run = $stored['run'];
                 }
             }
+            // Stopped by hand: nothing new is verified, claimed, run or charged. A payment the ledger already holds
+            // (replayed above, or an upfront one whose handler still has to run) is delivered: it was paid.
+            if (null === $run && $this->stop?->engaged()) {
+                return $this->paused();
+            }
             $reason = null === $run ? $sale->admit() : null;
         } catch (LedgerUnavailableException) {
             // Before the handler: nothing charged, nothing run.
@@ -165,6 +178,12 @@ final class X402Middleware implements MiddlewareInterface
 
                 return $this->json(503, ['error' => 'ledger_unavailable']);
             }
+            // Switched on since the check above: nothing was sent yet, so nothing is.
+            if ($this->stop?->engaged()) {
+                $sale->abandon(null);
+
+                return $this->paused();
+            }
             // Money first; once it moved, the receipt goes with whatever the handler answers.
             $receipt = $sale->settle();
             $this->record($sale, $receipt, null, false);
@@ -188,6 +207,12 @@ final class X402Middleware implements MiddlewareInterface
 
             return $response;
         }
+        if ($this->stop?->engaged()) {
+            // Switched on while the handler ran: nothing charged, its answer is withheld.
+            $sale->abandon($status);
+
+            return $this->paused();
+        }
         if (!$sale->intend($this->ledger, ['status' => 'settling'])) {
             // Refused before the settle: nothing charged, the handler's answer is withheld.
             $sale->abandon($status);
@@ -201,6 +226,11 @@ final class X402Middleware implements MiddlewareInterface
         }
 
         return $response->withHeader(PaymentHeaders::RESPONSE, PaymentHeaders::encode($receipt));
+    }
+
+    private function paused(): ResponseInterface
+    {
+        return $this->json(503, ['error' => Stop::REASON])->withHeader('Retry-After', '300');
     }
 
     /**
