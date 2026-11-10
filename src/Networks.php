@@ -186,6 +186,12 @@ final class Networks
         if (!(new CasperExact())->supports($network) || !CasperExact::isPackageHash($packageHash) || '' === $name || '' === $version) {
             throw new \InvalidArgumentException('A Casper network is casper:casper or casper:casper-test, a package hash 64 lowercase hex, and the domain names a token.');
         }
+        if ($decimals < 0 || $decimals > 38) {
+            throw new \InvalidArgumentException("A token has 0 to 38 decimals: $decimals.");
+        }
+        if (isset(self::$added[$network]) && self::$added[$network]['asset'] !== $packageHash) {
+            throw new \InvalidArgumentException("$network already has another token; call Networks::reset() first (a Budget cap would change meaning).");
+        }
         self::$added[$network] = ['label' => $label ?: $network, 'asset' => $packageHash, 'decimals' => $decimals, 'extra' => ['name' => $name, 'version' => $version], 'rpc' => $rpc, 'explorer' => $explorer];
 
         return $network;
@@ -274,7 +280,38 @@ final class Networks
      */
     public static function requirements(string $network, string $usd, string $payTo, int $timeout = self::TIMEOUT, iterable $schemes = []): array
     {
+        return self::offer($network, $usd, $payTo, $timeout, false, $schemes);
+    }
+
+    /**
+     * One PaymentRequirements for an amount of a Casper token, in the token's own units.
+     *
+     * The wCSPR on Casper is not worth a dollar, so a price in dollars would be
+     * charged in CSPR: `requirements()` refuses it, and a seller prices in the
+     * token here ('1.5' is 1.5 CSPR). The offer is `upfront`: settle before the handler.
+     *
+     * @param iterable<Scheme> $schemes your own schemes, for a chain family the library does not ship
+     *
+     * @throws \InvalidArgumentException
+     *                                   Not a Casper network, or an amount the token cannot represent
+     */
+    public static function requirementsInToken(string $network, string $amount, string $payTo, int $timeout = self::TIMEOUT, iterable $schemes = []): array
+    {
+        return self::offer($network, $amount, $payTo, $timeout, true, $schemes);
+    }
+
+    /**
+     * @param iterable<Scheme> $schemes
+     */
+    private static function offer(string $network, string $usd, string $payTo, int $timeout, bool $inToken, iterable $schemes): array
+    {
         $token = self::get($network);
+        // A scheme whose offers are its own (Casper: priced in the token, settled upfront) shapes or refuses this one.
+        $shaper = Schemes::find($network, $schemes, ShapesOffers::class);
+        if (null === $shaper && $inToken) {
+            throw new \InvalidArgumentException("requirementsInToken() is for Casper networks, not $network.");
+        }
+        $extra = $shaper?->offerExtra($network, $timeout, $inToken) ?? [];
         // The network's scheme says what an address is there (AddressForm); one that does not say is not checked.
         $form = Schemes::find($network, $schemes, AddressForm::class);
         if ('' === $payTo || (null !== $form && !$form->valid($payTo))) {
@@ -288,7 +325,7 @@ final class Networks
             'asset' => $token['asset'],
             'payTo' => null === $form ? $payTo : $form->spell($payTo),
             'maxTimeoutSeconds' => $timeout,
-            'extra' => $token['extra'],
+            'extra' => $token['extra'] + $extra,
         ];
     }
 

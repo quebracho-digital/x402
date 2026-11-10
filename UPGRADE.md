@@ -15,10 +15,10 @@ interfaces only: `psr/cache` ^3 (`Screening` caches the sanctions API's answers 
 - **`Seller` and `Buyer`** build the middlewares and the paying clients by name instead of by position:
   `Seller::with($schemes, $facilitator, $f, $f)->ledger($ledger)->events($events)->mcp($prices)`.
   The constructors stay as they are.
-- **A chain family plugs in through its scheme.** Four optional interfaces say what the core used to work
+- **A chain family plugs in through its scheme.** Five optional interfaces say what the core used to work
   out from the network's prefix: `SpendsOnce` (the payment's key), `Expires` (its expiry: claim lifetime
   and slow tools), `AddressForm` (what an address is, and how two are compared), `VetsOffers` (what a buyer
-  may sign). The built-in schemes implement them and behave as before; see `docs/extending.md`. Two
+  may sign), and `ShapesOffers` (what an offer on its networks must carry). The built-in schemes implement them and behave as before; see `docs/extending.md`. Two
   consequences: `CasperExact` payments can now buy tools that declare a `$duration`, and a `Scheme` of
   your own that implements `SpendsOnce` must be passed to `Settlement::key($payment, $schemes)` wherever
   you compute a key yourself.
