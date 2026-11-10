@@ -17,22 +17,14 @@ use Psr\Http\Message\StreamFactoryInterface;
  */
 final class Sale
 {
-    public const UNAVAILABLE = 'facilitator_unavailable';
-    public const UNEXPECTED_VERIFY = 'unexpected_verify_error';
-    /** How long a claim or a state lives, at most: seconds. */
-    public const TTL = 600;
-    /** How long a 'settling' or 'pending' state that holds a transaction lives: a day to reconcile it. */
-    public const REFERENCED_TTL = 86400;
-    /**
-     * How long an open entry (PaymentLedger::open) lives: three days, so a reconciler still sees it after the
-     * 24 h in which it may resolve it, and marks it needs_review.
-     */
-    public const OPEN_TTL = 259200;
-    /** The largest response body kept in the ledger, in bytes. */
-    public const MAX_BODY = 1048576;
-
-    /** The prefix of the claim one retry holds while it runs an upfront handler that has not delivered. */
-    public const RUN = 'run:';
+    // The names below moved to Settlement, which is public: this class is internal. Kept so nothing breaks.
+    public const string UNAVAILABLE = Settlement::UNAVAILABLE;
+    public const string UNEXPECTED_VERIFY = Settlement::UNEXPECTED_VERIFY;
+    public const int TTL = Settlement::TTL;
+    public const int REFERENCED_TTL = Settlement::REFERENCED_TTL;
+    public const int OPEN_TTL = Settlement::OPEN_TTL;
+    public const int MAX_BODY = Settlement::MAX_BODY;
+    public const string RUN = Settlement::RUN;
 
     private ?AddressCheck $check = null;
     private bool $claimed = false;
@@ -106,7 +98,7 @@ final class Sale
         // Again after the online verify, which may have taken seconds of that validity.
         $reason ??= $this->expiresTooSoon($scheme);
         // Spent before it runs: N concurrent copies get one delivery.
-        if (null === $reason && !($this->claimed = ($this->claim)(Settlement::key($this->payment)))) {
+        if (null === $reason && !($this->claimed = ($this->claim)($this->key()))) {
             $reason = 'duplicate_settlement';
         }
         if (null !== $reason) {
@@ -129,14 +121,14 @@ final class Sale
         if (null !== $this->scheme()->verify($this->payment, $this->req)) {
             return null;
         }
-        $key = Settlement::key($this->payment);
+        $key = $this->key();
         $state = $ledger->get($key);
         $answer = null === $state ? null : $this->classify($ledger, $key, $state, $lookup);
         if (!isset($answer['run'])) {
             return $answer;
         }
         // Charged upfront, never delivered: of N concurrent retries one runs the handler, the rest wait.
-        if (!$ledger->claim(self::RUN.$key, self::ttl($this->payment))) {
+        if (!$ledger->claim(self::RUN.$key, Settlement::ttl($this->payment, [], $this->schemes))) {
             return ['refuse' => 'in_progress'];
         }
         $this->running = $ledger;
@@ -165,7 +157,7 @@ final class Sale
             return;
         }
         try {
-            $this->running->release(self::RUN.Settlement::key($this->payment));
+            $this->running->release(self::RUN.$this->key());
         } catch (\Throwable $e) {
             // See the docblock; the answer already given is not changed.
             $this->fault(PaymentFault::RELEASE_RUN, $e);
@@ -238,7 +230,7 @@ final class Sale
      */
     public function fault(string $op, \Throwable $error): void
     {
-        Events::report($this->events, new PaymentFault($op, Settlement::key($this->payment), (string) $this->req['network'], $error));
+        Events::report($this->events, new PaymentFault($op, $this->key(), (string) $this->req['network'], $error));
     }
 
     /**
@@ -254,7 +246,7 @@ final class Sale
             $ref = static fn (mixed $v): ?string => is_string($v) && '' !== $v ? $v : null;
             $this->events?->dispatch(new PaymentIntent(
                 $state['status'],
-                Settlement::key($this->payment),
+                $this->key(),
                 ['network' => $this->req['network'], 'from' => $this->scheme()->payer($this->payment)],
                 ['network' => $this->req['network'], 'payTo' => $this->req['payTo'], 'amount' => $this->req['amount'], 'asset' => $this->req['asset']],
                 $ref($receipt['paymentId'] ?? null),
@@ -277,8 +269,8 @@ final class Sale
             $state['response'] = $kept;
             $state['status'] = 'settled' === $state['status'] ? 'delivered' : $state['status'];
         }
-        $key = Settlement::key($this->payment);
-        $ledger->put($key, $state, self::ttl($this->payment, $state));
+        $key = $this->key();
+        $ledger->put($key, $state, Settlement::ttl($this->payment, $state, $this->schemes));
         $this->track($ledger, $key, $state);
     }
 
@@ -329,7 +321,7 @@ final class Sale
             'nonce' => $text($auth['nonce'] ?? null),
             'payTo' => $this->req['payTo'] ?? null,
             'amount' => $this->req['amount'] ?? null,
-            'validBefore' => is_numeric($auth['validBefore'] ?? null) ? (int) $auth['validBefore'] : null,
+            'validBefore' => Schemes::find((string) $this->req['network'], $this->schemes, Expires::class)?->expiresAt($this->payment),
             'transaction' => $text($receipt['transaction'] ?? null),
             'paymentId' => $text($receipt['paymentId'] ?? null),
             'status' => $state['status'],
@@ -347,35 +339,30 @@ final class Sale
     }
 
     /**
-     * How long a claim or state lives: until the signature expires, at most TTL seconds. A 'settling' or
-     * 'pending' state with a transaction lives REFERENCED_TTL: its money may have moved, and the hash is
-     * what a retry (the lookup) or a person reconciles it with.
+     * @deprecated use Settlement::ttl()
      *
      * @param array<string, mixed> $state
+     * @param iterable<Scheme>     $schemes
      */
-    public static function ttl(array $payment, array $state = []): int
+    public static function ttl(array $payment, array $state = [], iterable $schemes = []): int
     {
-        $tx = is_array($state['receipt'] ?? null) ? ($state['receipt']['transaction'] ?? null) : null;
-        if (\in_array($state['status'] ?? null, ['settling', 'pending'], true) && is_string($tx) && '' !== $tx) {
-            return self::REFERENCED_TTL;
-        }
-        $until = $payment['payload']['authorization']['validBefore'] ?? null;
-        $left = is_numeric($until) ? (int) $until - time() : self::TTL;
-
-        return min(self::TTL, max(1, $left));
+        return Settlement::ttl($payment, $state, $schemes);
     }
 
     /**
-     * The response a stored state answers with (its receipt is added by the caller).
+     * @deprecated use Settlement::restore()
      */
     public static function restore(array $stored, ResponseFactoryInterface $responses, StreamFactoryInterface $streams): ResponseInterface
     {
-        $response = $responses->createResponse($stored['status']);
-        foreach ($stored['headers'] as $name => $value) {
-            $response = $response->withHeader((string) $name, (string) $value);
-        }
+        return Settlement::restore($stored, $responses, $streams);
+    }
 
-        return $response->withBody($streams->createStream((string) base64_decode($stored['body'], true)));
+    /**
+     * This payment's key in the claim and the ledger, by this seller's schemes.
+     */
+    public function key(): string
+    {
+        return Settlement::key($this->payment, $this->schemes);
     }
 
     private function scheme(): Scheme
@@ -430,7 +417,7 @@ final class Sale
             $state['handler_ran'] = false;
         }
         $state['status'] = isset($state['response']) ? 'delivered' : 'settled';
-        $ledger->put($key, $state, self::ttl($this->payment, $state));
+        $ledger->put($key, $state, Settlement::ttl($this->payment, $state, $this->schemes));
         $this->track($ledger, $key, $state);
 
         return $this->answer($state);
@@ -438,14 +425,14 @@ final class Sale
 
     /**
      * Whether a lookup's receipt is about this payment: its network, the stored transaction and paymentId
-     * (when stored), and the payer the signature proves (when the lookup names one). EVM hex is compared
-     * without case; anything else byte for byte (base58 is case-sensitive).
+     * (when stored), and the payer the signature proves (when the lookup names one). Compared as the scheme spells them
+     * (AddressForm: EVM hex without case, base58 exactly); byte for byte when the scheme does not say.
      */
     private function same(array $state, array $receipt): bool
     {
         $stored = is_array($state['receipt'] ?? null) ? $state['receipt'] : [];
-        $evm = str_starts_with($this->req['network'], 'eip155:');
-        $eq = static fn (mixed $a, mixed $b): bool => is_string($a) && is_string($b) && ($evm ? 0 === strcasecmp($a, $b) : $a === $b);
+        $form = Schemes::find((string) $this->req['network'], $this->schemes, AddressForm::class);
+        $eq = static fn (mixed $a, mixed $b): bool => is_string($a) && is_string($b) && (null !== $form ? $form->same($a, $b) : $a === $b);
         $known = static fn (mixed $v): bool => is_string($v) && '' !== $v;
 
         return ($receipt['network'] ?? null) === $this->req['network']
@@ -548,29 +535,23 @@ final class Sale
      * A slow handler must not outlive the signature: settled after it, an expired
      * authorization would deliver unpaid. Checked right after the offline verify
      * and again last before the claim, once the online verify spent its time.
-     * Only a call that declares a duration.
+     * Only a call that declares a duration, and only a scheme whose payments carry an expiry (Expires):
+     * any other has none we can read, and is refused.
      */
     private function expiresTooSoon(Scheme $scheme): ?string
     {
         if ($this->duration <= 0) {
             return null;
         }
-        // ponytail: EVM only (EIP-3009 validBefore). Reachable: a Solana or NEAR
-        // payment for a tool that declares a duration has no expiry we can read.
-        if (!$scheme instanceof EvmExact) {
-            return 'unsupported_scheme';
-        }
 
-        // verify() passed, so validBefore is a canonical decimal; same clock as verify().
-        return (int) $this->payment['payload']['authorization']['validBefore'] - $scheme->now() < $this->duration + EvmExact::SLACK
-          ? 'invalid_exact_evm_payload_authorization_valid_before' : null;
+        return $scheme instanceof Expires ? $scheme->tooShortFor($this->payment, $this->duration) : 'unsupported_scheme';
     }
 
     private function free(): void
     {
         if ($this->claimed && null !== $this->release) {
             try {
-                ($this->release)(Settlement::key($this->payment));
+                ($this->release)($this->key());
             } catch (LedgerUnavailableException $e) {
                 // ponytail: the claim stays until its TTL, so the buyer waits (409 in_progress) but cannot pay twice; the answer is not changed by a failed release.
                 $this->fault(PaymentFault::RELEASE, $e);

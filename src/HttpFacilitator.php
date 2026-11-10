@@ -25,22 +25,23 @@ final class HttpFacilitator implements Facilitator
     /**
      * @deprecated since 0.2: use CircleFacilitator::URL with CircleFacilitator. Kept so 0.1.x callers still compile.
      */
-    public const CIRCLE = CircleFacilitator::URL;
+    public const string CIRCLE = CircleFacilitator::URL;
     // Casper (casper:casper, casper:casper-test); /verify and /settle take a CSPR.cloud key as $bearer.
-    public const CSPR_CLOUD = 'https://x402-facilitator.cspr.cloud';
+    public const string CSPR_CLOUD = 'https://x402-facilitator.cspr.cloud';
 
     private readonly string $url;
 
     /**
-     *                        @deprecated removed in 1.0: keyless Circle is CircleFacilitator, which sends the seller proof.
-     *                        Setting it triggers E_USER_DEPRECATED.
-     *                        @deprecated removed in 1.0, with $seller: CircleFacilitator polls /status.
-     *                        @deprecated removed in 1.0, with $seller: CircleFacilitator polls /status.
-     *
-     * @param ?\Closure $headers
-     *                           fn (string $purpose, string $method, string $body, string $network): array<string, string>,
-     *                           the extra headers of each call (a wrapper's). It may throw
-     *                           \InvalidArgumentException before anything is sent.
+     * @param string    $url              the facilitator's base URL, https only
+     * @param ?string   $bearer           the facilitator's API key, sent as "Authorization: Bearer"; NULL sends none
+     * @param ?Signer   $seller           Deprecated, removed in 1.0: keyless Circle is CircleFacilitator, which sends the
+     *                                    seller proof. Setting it triggers E_USER_DEPRECATED.
+     * @param int       $pollDelaySeconds Seconds between two /status queries of a pending settle (see settle()).
+     *                                    Deprecated, removed in 1.0 with $seller: CircleFacilitator polls /status.
+     * @param int       $pollAttempts     How many /status queries at most. Deprecated, removed in 1.0 with $seller.
+     * @param ?\Closure $headers          fn (string $purpose, string $method, string $body, string $network): array<string, string>,
+     *                                    the extra headers of each call (a wrapper's). It may throw
+     *                                    \InvalidArgumentException before anything is sent.
      */
     public function __construct(
         private readonly ClientInterface $http,
@@ -83,24 +84,38 @@ final class HttpFacilitator implements Facilitator
     }
 
     /**
-     * As v0.2.1 settled, for every caller: a pending settle with a paymentId is polled at /status, with or without
-     * $seller or $bearer. The results are v0.2.1's (DECISIONS.md D15); the timing is not: the first query goes out
-     * at once and the delay sits only between queries (DECISIONS.md D16, "corrige el orden del polling").
-     * ponytail: a copy of CircleFacilitator::settle's poll, kept here because HttpFacilitator cannot build CircleFacilitator
-     * (it composes this class). Delete with the 0.2.x shim in 1.0.
+     * As v0.2.1 settled, for every caller: a settle that comes back pending with a paymentId is polled at
+     * /status, with or without $seller or $bearer (DECISIONS.md D15). Only Circle answers that way; any other
+     * facilitator's answer has no paymentId and is never polled.
      */
     private function settleWithPoll(array $payment, array $req): array
     {
-        $out = $this->settleRaw($payment, $req);
+        return $this->pollSettle($this->settleRaw($payment, $req), $payment, $req, $this->pollAttempts, $this->pollDelaySeconds);
+    }
+
+    /**
+     * Follows a settle answer that is still pending (success not true, with a paymentId) at /status, then
+     * checks it (checkSettle). An answer that is not pending is only checked.
+     *
+     * The first query goes out at once and the delay sits only between queries (DECISIONS.md D16). It waits
+     * with sleep(): at most ($attempts - 1) × $delaySeconds, inside the request that sells. That wait is the
+     * price of answering "paid" instead of "pending" when the facilitator confirms a moment later; a seller
+     * that must not block passes $attempts 0 and reconciles the pending payment by its paymentId (ReceiptLookup).
+     * Still pending after the last query, it comes back as settlement_pending with that paymentId.
+     *
+     * Public for CircleFacilitator, which settles through this class.
+     */
+    public function pollSettle(array $out, array $payment, array $req, int $attempts, int $delaySeconds): array
+    {
         $id = $out['extensions']['settlement-status']['paymentId'] ?? null;
-        for ($i = 0; true !== ($out['success'] ?? null) && is_string($id) && preg_match('/^[\w-]+$/', $id) && $i < $this->pollAttempts; ++$i) {
+        for ($i = 0; true !== ($out['success'] ?? null) && is_string($id) && preg_match('/^[\w-]+$/', $id) && $i < $attempts; ++$i) {
             if ($i > 0) {
-                sleep($this->pollDelaySeconds);
+                sleep($delaySeconds);
             }
             try {
                 $status = $this->get("/status/$id", 'status', $req['network']);
             } catch (FacilitatorException) {
-                // Settled or not, Circle knows it by this id.
+                // Settled or not, the facilitator knows it by this id.
                 break;
             }
             if ('completed' === ($status['status'] ?? null)) {
@@ -110,6 +125,7 @@ final class HttpFacilitator implements Facilitator
             }
         }
         if (true !== ($out['success'] ?? null) && is_string($id)) {
+            // Still pending after polling: its id is what reconciles it.
             return ['success' => false, 'errorReason' => 'settlement_pending', 'transaction' => is_string($out['transaction'] ?? null) ? $out['transaction'] : '', 'network' => $req['network'], 'paymentId' => $id];
         }
 

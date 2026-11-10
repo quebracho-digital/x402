@@ -20,7 +20,7 @@ final class Networks
     // blacklist of its USDC and USDT is an eth_call, which costs no gas. Paying on
     // it is possible but a settlement there costs real gas. The testnets are for the demo.
     // Any other chain is registered by the site with add() (see "Add a blockchain" in docs/networks.md).
-    public const ALL = [
+    public const array ALL = [
         'eip155:8453' => [
             'label' => 'Base (USDC)',
             // Circle's USDC on Base (developers.circle.com, checked 2026-11-05). The EIP-712 domain was read from
@@ -186,6 +186,12 @@ final class Networks
         if (!(new CasperExact())->supports($network) || !CasperExact::isPackageHash($packageHash) || '' === $name || '' === $version) {
             throw new \InvalidArgumentException('A Casper network is casper:casper or casper:casper-test, a package hash 64 lowercase hex, and the domain names a token.');
         }
+        if ($decimals < 0 || $decimals > 38) {
+            throw new \InvalidArgumentException("A token has 0 to 38 decimals: $decimals.");
+        }
+        if (isset(self::$added[$network]) && self::$added[$network]['asset'] !== $packageHash) {
+            throw new \InvalidArgumentException("$network already has another token; call Networks::reset() first (a Budget cap would change meaning).");
+        }
         self::$added[$network] = ['label' => $label ?: $network, 'asset' => $packageHash, 'decimals' => $decimals, 'extra' => ['name' => $name, 'version' => $version], 'rpc' => $rpc, 'explorer' => $explorer];
 
         return $network;
@@ -238,28 +244,77 @@ final class Networks
     }
 
     /**
+     * Fails when a network cannot be sold on: unknown, or verified by none of the schemes. For a deploy check,
+     * so a mistyped network fails there and not on the first paid request.
+     *
+     * @param Scheme[] $schemes the schemes the seller's middleware is given
+     *
+     * @throws \InvalidArgumentException
+     */
+    public static function assertSupported(string $network, array $schemes): void
+    {
+        if (!self::has($network)) {
+            throw new \InvalidArgumentException("\"$network\" is not a known network");
+        }
+        if ([] === array_filter($schemes, static fn (Scheme $s) => $s->supports($network))) {
+            $registered = implode(', ', array_map(static fn (Scheme $s) => $s::class, $schemes)) ?: 'none';
+
+            throw new \InvalidArgumentException("\"$network\" is supported by no registered scheme (registered: $registered).");
+        }
+    }
+
+    /**
      * How long the buyer's signed payment stays valid, in seconds, by default.
      *
      * It must outlive the delivery: settling happens after it.
      */
-    public const TIMEOUT = 60;
+    public const int TIMEOUT = 60;
 
     /**
      * One PaymentRequirements for a price in dollars.
      *
+     * @param iterable<Scheme> $schemes your own schemes, for a chain family the library does not ship
+     *
      * @throws \InvalidArgumentException
-     *                                   Unknown network, or a price the token cannot represent
+     *                                   Unknown network, a payTo that is no address there, or a price the token cannot represent
      */
-    public static function requirements(string $network, string $usd, string $payTo, int $timeout = self::TIMEOUT): array
+    public static function requirements(string $network, string $usd, string $payTo, int $timeout = self::TIMEOUT, iterable $schemes = []): array
+    {
+        return self::offer($network, $usd, $payTo, $timeout, false, $schemes);
+    }
+
+    /**
+     * One PaymentRequirements for an amount of a Casper token, in the token's own units.
+     *
+     * The wCSPR on Casper is not worth a dollar, so a price in dollars would be
+     * charged in CSPR: `requirements()` refuses it, and a seller prices in the
+     * token here ('1.5' is 1.5 CSPR). The offer is `upfront`: settle before the handler.
+     *
+     * @param iterable<Scheme> $schemes your own schemes, for a chain family the library does not ship
+     *
+     * @throws \InvalidArgumentException
+     *                                   Not a Casper network, or an amount the token cannot represent
+     */
+    public static function requirementsInToken(string $network, string $amount, string $payTo, int $timeout = self::TIMEOUT, iterable $schemes = []): array
+    {
+        return self::offer($network, $amount, $payTo, $timeout, true, $schemes);
+    }
+
+    /**
+     * @param iterable<Scheme> $schemes
+     */
+    private static function offer(string $network, string $usd, string $payTo, int $timeout, bool $inToken, iterable $schemes): array
     {
         $token = self::get($network);
-        $evm = str_starts_with($network, 'eip155:');
-        $valid = match (true) {
-            $evm => (bool) preg_match('/^0x[0-9a-fA-F]{40}$/', $payTo),
-            str_starts_with($network, 'casper:') => CasperExact::isAddress($payTo),
-            default => self::isSolanaAddress($payTo),
-        };
-        if (!$valid) {
+        // A scheme whose offers are its own (Casper: priced in the token, settled upfront) shapes or refuses this one.
+        $shaper = Schemes::find($network, $schemes, ShapesOffers::class);
+        if (null === $shaper && $inToken) {
+            throw new \InvalidArgumentException("requirementsInToken() is for Casper networks, not $network.");
+        }
+        $extra = $shaper?->offerExtra($network, $timeout, $inToken) ?? [];
+        // The network's scheme says what an address is there (AddressForm); one that does not say is not checked.
+        $form = Schemes::find($network, $schemes, AddressForm::class);
+        if ('' === $payTo || (null !== $form && !$form->valid($payTo))) {
             throw new \InvalidArgumentException("Not a payTo address on $network: $payTo.");
         }
 
@@ -268,9 +323,9 @@ final class Networks
             'network' => $network,
             'amount' => self::atomic($usd, $token['decimals']),
             'asset' => $token['asset'],
-            'payTo' => $evm ? Signer::checksum($payTo) : $payTo,
+            'payTo' => null === $form ? $payTo : $form->spell($payTo),
             'maxTimeoutSeconds' => $timeout,
-            'extra' => $token['extra'],
+            'extra' => $token['extra'] + $extra,
         ];
     }
 

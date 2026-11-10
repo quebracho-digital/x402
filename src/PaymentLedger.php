@@ -11,7 +11,7 @@ namespace Quebracho\X402;
  * is sent), 'handling' (upfront: intention written before the handler runs), 'settled' (charged, no response
  * kept), 'delivered' (charged, response kept), or 'pending' (may have charged, not confirmed). Settled and
  * pending states carry 'transaction', 'paymentId', 'network' and 'receipt' when known; a response
- * is `['status' => int, 'headers' => array<string,string>, 'body' => string]` (see Sale::capture).
+ * is `['status' => int, 'headers' => array<string,string>, 'body' => string]` (Settlement::restore() rebuilds it).
  *
  * Every state expires after its TTL in seconds.
  */

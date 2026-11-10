@@ -15,9 +15,9 @@ namespace Quebracho\X402;
  */
 final class RedisLedger implements PaymentLedger
 {
-    private const PREFIX = 'x402:';
+    private const string PREFIX = 'x402:';
     /** The set of open keys (PaymentLedger::open); each one's ref is under OPEN.':'.$key. */
-    private const OPEN = 'x402:open';
+    private const string OPEN = 'x402:open';
 
     private ?\Redis $redis = null;
 

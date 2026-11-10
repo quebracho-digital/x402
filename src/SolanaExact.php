@@ -15,11 +15,11 @@ namespace Quebracho\X402;
  *
  * @see https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_svm.md
  */
-final class SolanaExact implements Scheme
+final class SolanaExact implements Scheme, SpendsOnce, AddressForm, VetsOffers
 {
     // Spec §2.2.1 reference caps.
-    private const MAX_COMPUTE_UNITS = 400_000;
-    private const MAX_PRICE_MICROLAMPORTS = 5_000_000;
+    private const int MAX_COMPUTE_UNITS = 400_000;
+    private const int MAX_PRICE_MICROLAMPORTS = 5_000_000;
 
     /**
      * @param ?SolanaKey $buyer
@@ -161,6 +161,41 @@ final class SolanaExact implements Scheme
         $tx = is_string($wire) ? Solana::parse($wire) : null;
 
         return $tx['keys'][1] ?? null;
+    }
+
+    /**
+     * Network and the signed message, not the signatures: the fee payer's slot is empty now and filled later,
+     * and any bytes there are the same payment.
+     */
+    public function spent(array $payment): ?array
+    {
+        $wire = is_string($payment['payload']['transaction'] ?? null) ? base64_decode($payment['payload']['transaction'], true) : false;
+        $tx = is_string($wire) ? Solana::parse($wire) : null;
+
+        return null === $tx ? null : [$payment['accepted']['network'] ?? '', bin2hex($tx['message'])];
+    }
+
+    public function valid(string $address): bool
+    {
+        return 1 === preg_match('/^[1-9A-HJ-NP-Za-km-z]{32,44}$/', $address);
+    }
+
+    public function spell(string $address): string
+    {
+        return $address;
+    }
+
+    public function same(string $a, string $b): bool
+    {
+        // Base58 is case-sensitive.
+        return $a === $b;
+    }
+
+    public function signable(array $req, array $token): bool
+    {
+        // Base58 only, one spelling; the fee payer signs last and pays fees, never us.
+        return $this->valid((string) ($req['payTo'] ?? '')) && $this->valid((string) ($req['extra']['feePayer'] ?? ''))
+            && gmp_cmp((string) $req['amount'], (string) PHP_INT_MAX) <= 0;
     }
 
     private function message(array $req, string $buyer): string

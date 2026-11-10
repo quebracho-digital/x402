@@ -108,6 +108,9 @@ final class FileLedgerTest extends TestCase
         $ledger->open('k', [], 600);
         $ledger->put('dead', ['status' => 'settled'], -1);
         $ledger->claim('lock', 600); // leaves .lock, so a claim gets past the lock
+        if (\function_exists('posix_geteuid') && 0 === posix_geteuid()) {
+            self::markTestSkipped('root writes to a read-only directory: run the tests as another user.');
+        }
         chmod($dir, 0500);
         try {
             $this->expectException(LedgerUnavailableException::class);

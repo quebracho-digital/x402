@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Quebracho\X402;
 
+use Psr\Clock\ClockInterface;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -24,15 +25,12 @@ use Psr\Log\LoggerInterface;
  */
 final class PaymentRecord
 {
-    public const OUTCOMES = ['settled', 'delivered', 'not_settled', 'failed_after_settle'];
+    public const array OUTCOMES = ['settled', 'delivered', 'not_settled', 'failed_after_settle'];
 
-    /**
-     * @param ?\Closure(): int $clock
-     */
     public function __construct(
         private readonly string $dir,
         private readonly ?LoggerInterface $logger = null,
-        private readonly ?\Closure $clock = null,
+        private readonly ClockInterface|\Closure|null $clock = null,
     ) {
     }
 
@@ -41,7 +39,7 @@ final class PaymentRecord
         if (!\in_array($event->status, self::OUTCOMES, true)) {
             return;
         }
-        $now = null === $this->clock ? time() : ($this->clock)();
+        $now = Clock::now($this->clock);
         try {
             $key = Settlement::key($event->payment);
         } catch (\Throwable) {

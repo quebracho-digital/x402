@@ -21,7 +21,6 @@ use Quebracho\X402\Networks;
 use Quebracho\X402\PaymentHeaders;
 use Quebracho\X402\PaymentLedger;
 use Quebracho\X402\Rpc;
-use Quebracho\X402\Sale;
 use Quebracho\X402\Settlement;
 use Quebracho\X402\Signer;
 use Quebracho\X402\X402McpMiddleware;
@@ -398,7 +397,7 @@ final class LedgerReplayTest extends TestCase
 
     public function testAResponseOverOneMebibyteIsNotStored(): void
     {
-        $big = $this->handler(str_repeat('x', Sale::MAX_BODY + 1));
+        $big = $this->handler(str_repeat('x', Settlement::MAX_BODY + 1));
         $middleware = $this->http();
         $payment = $this->httpPayment($middleware);
 
@@ -924,7 +923,7 @@ final class LedgerReplayTest extends TestCase
         self::assertSame(409, $second->getStatusCode());
         self::assertSame('in_progress', json_decode((string) $second->getBody(), true)['error']);
         self::assertSame(2, $this->runs, 'the failed first attempt, then one delivery');
-        self::assertNull($ledger->get(Sale::RUN.Settlement::key($payment)));
+        self::assertNull($ledger->get(Settlement::RUN.Settlement::key($payment)));
     }
 
     /** Failed before the run claim, as the HTTP one. */
@@ -1003,14 +1002,14 @@ final class LedgerReplayTest extends TestCase
         $replay = $this->http($this->noSecondSettle(), ledger: $late, upfront: true)->process($this->httpCall($payment), $this->handler());
         self::assertSame(200, $replay->getStatusCode());
         self::assertSame(2, $this->runs);
-        self::assertNull($ledger->get(Sale::RUN.$key));
+        self::assertNull($ledger->get(Settlement::RUN.$key));
     }
 
     public function testTheRunClaimIsFreedAfterAFailureAnExceptionAndASuccess(): void
     {
         $ledger = $this->memoryLedger();
         $payment = $this->httpPayment($this->http(ledger: $ledger, upfront: true));
-        $run = Sale::RUN.Settlement::key($payment);
+        $run = Settlement::RUN.Settlement::key($payment);
         $retry = fn (RequestHandlerInterface $h): ResponseInterface => $this->http($this->noSecondSettle(), ledger: $ledger, upfront: true)->process($this->httpCall($payment), $h);
         $this->http(ledger: $ledger, upfront: true)->process($this->httpCall($payment), $this->handler('boom', 500));
 
@@ -1268,7 +1267,7 @@ final class LedgerReplayTest extends TestCase
     public function testOnlyAStateWithATransactionLivesADay(): void
     {
         $payment = $this->httpPayment($this->http());
-        $left = min(Sale::TTL, (int) $payment['payload']['authorization']['validBefore'] - time());
+        $left = min(Settlement::TTL, (int) $payment['payload']['authorization']['validBefore'] - time());
         $sends = 0;
         $spy = $this->spyLedger();
         $this->http($this->chainSettle($sends), ledger: $spy)->process($this->httpCall($payment), $this->handler());
@@ -1276,7 +1275,7 @@ final class LedgerReplayTest extends TestCase
         // 'settling', the same with its transaction, then 'delivered' (with the response).
         self::assertSame(['settling', 'settling', 'delivered'], array_column($spy->puts, 'status'));
         self::assertEqualsWithDelta($left, $spy->ttls[0], 1);
-        self::assertSame(Sale::REFERENCED_TTL, $spy->ttls[1]);
+        self::assertSame(Settlement::REFERENCED_TTL, $spy->ttls[1]);
         self::assertEqualsWithDelta($left, $spy->ttls[2], 1);
 
         $other = $this->httpPayment($this->http());

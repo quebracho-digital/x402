@@ -1,0 +1,50 @@
+name: ofac
+# Keeps the OFAC SDN list shipped with the library (resources/ofac-sdn.json) at OFAC's latest publication.
+# Every day it downloads SDN.CSV from OFAC; when the list changed it opens (or updates) one pull request.
+# Sites still keep their own copy fresh (OfacSdnSync from a cron): this only bounds how old a release can be.
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: gmp, sodium
+          coverage: none
+      - run: composer install --no-interaction --no-progress
+      - run: php bin/update-ofac.php
+      - name: Stop when the list did not change
+        id: diff
+        run: |
+          # The addresses decide, not the publication date: OFAC republishes the file without touching them.
+          if git diff --quiet -I'"published"' -- resources/ofac-sdn.json; then
+            git checkout -- resources/ofac-sdn.json
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.diff.outputs.changed == 'true'
+        run: vendor/bin/phpunit
+      - name: Open or update the pull request
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          published=$(php -r 'echo json_decode(file_get_contents("resources/ofac-sdn.json"), true)["published"];')
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B chore/ofac-refresh
+          git commit -am "chore(ofac): refresh the bundled SDN list to ${published%%T*}"
+          git push --force origin chore/ofac-refresh
+          gh pr view chore/ofac-refresh --json state --jq .state 2>/dev/null | grep -q OPEN \
+            || gh pr create --base main --head chore/ofac-refresh \
+                 --title "chore(ofac): refresh the bundled SDN list to ${published%%T*}" \
+                 --body "OFAC published a new SDN list (${published}). Downloaded from the Sanctions List Service by the ofac workflow; the tests ran on it."

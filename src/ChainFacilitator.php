@@ -19,10 +19,10 @@ namespace Quebracho\X402;
 final class ChainFacilitator implements Facilitator
 {
     // transferWithAuthorization(address,address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)
-    private const TRANSFER_WITH_AUTHORIZATION = '0xe3ee160e';
+    private const string TRANSFER_WITH_AUTHORIZATION = '0xe3ee160e';
 
     // Seconds a payment must stay valid after verifying: settling comes next.
-    private const MARGIN = 3;
+    private const int MARGIN = 3;
 
     /**
      * @param string   $network

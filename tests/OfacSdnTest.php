@@ -21,7 +21,7 @@ use Quebracho\X402\SyncResult;
 
 final class OfacSdnTest extends TestCase
 {
-    /** Listed in the SDN list of 2026-11-06, shipped in resources/ofac-sdn.json. */
+    /** Listed in the SDN list shipped in resources/ofac-sdn.json (on it since 2026-11-06). */
     private const LISTED = '0x1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB';
     private const CLEAN = '0x000000000000000000000000000000000000dEaD';
 
@@ -160,18 +160,20 @@ final class OfacSdnTest extends TestCase
     }
 
     public function testSyncFollowsOfacsRedirectAndWritesASnapshotTheListReads(): void
+    // The dates below are far in the future on purpose: OfacSdn uses the younger of the site's snapshot and the
+    // list shipped in resources/, so a test snapshot must outlive every refresh of the shipped one.
     {
         $asked = [];
         $http = self::http([
             new Response(302, ['Location' => 'https://bucket.example/SDN.CSV?sig=1']),
-            new Response(200, ['Last-Modified' => 'Fri, 06 Nov 2026 19:33:18 GMT'], self::csv(120)),
+            new Response(200, ['Last-Modified' => 'Fri, 06 Nov 2099 19:33:18 GMT'], self::csv(120)),
         ], $asked);
         $file = $this->dir.'/sdn.json';
 
         self::assertSame(120, OfacSdn::sync($http, new Psr17Factory(), $file)->count);
         self::assertSame([OfacSdn::URL, 'https://bucket.example/SDN.CSV?sig=1'], $asked);
         $list = new OfacSdn($file);
-        self::assertSame('2026-11-06T19:33:18Z', $list->published());
+        self::assertSame('2099-11-06T19:33:18Z', $list->published());
         self::assertTrue($list->listed(\sprintf('0x%040x', 7)));
     }
 
@@ -191,11 +193,11 @@ final class OfacSdnTest extends TestCase
     public function testAnOlderOfacListNeverReplacesAYoungerOne(): void
     {
         $file = $this->dir.'/sdn.json';
-        self::assertEquals(new SyncResult(120, '2026-11-06T19:33:18Z', true), OfacSdn::write(self::csv(120), 'Fri, 06 Nov 2026 19:33:18 GMT', $file));
-        self::assertEquals(new SyncResult(120, '2026-11-06T19:33:18Z', false), OfacSdn::write(self::csv(130), 'Thu, 05 Nov 2026 19:33:18 GMT', $file), 'the younger file is kept');
-        self::assertSame('2026-11-06T19:33:18Z', (new OfacSdn($file))->published());
-        self::assertSame(140, OfacSdn::write(self::csv(140), 'Sat, 07 Nov 2026 19:33:18 GMT', $file)->count);
-        self::assertSame('2026-11-07T19:33:18Z', (new OfacSdn($file))->published());
+        self::assertEquals(new SyncResult(120, '2099-11-06T19:33:18Z', true), OfacSdn::write(self::csv(120), 'Fri, 06 Nov 2099 19:33:18 GMT', $file));
+        self::assertEquals(new SyncResult(120, '2099-11-06T19:33:18Z', false), OfacSdn::write(self::csv(130), 'Thu, 05 Nov 2099 19:33:18 GMT', $file), 'the younger file is kept');
+        self::assertSame('2099-11-06T19:33:18Z', (new OfacSdn($file))->published());
+        self::assertSame(140, OfacSdn::write(self::csv(140), 'Sat, 07 Nov 2099 19:33:18 GMT', $file)->count);
+        self::assertSame('2099-11-07T19:33:18Z', (new OfacSdn($file))->published());
     }
 
     public function testSyncKeepsTheOldFileWhenTheAnswerIsNotTheList(): void

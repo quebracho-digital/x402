@@ -10,7 +10,7 @@ namespace Quebracho\X402;
  * Follows x402-foundation specs/schemes/exact/scheme_exact_near.md. Experimental.
  * Ed25519 keys only: secp256k1 delegate keys are rejected as invalid_payload.
  */
-final class NearExact implements Scheme
+final class NearExact implements Scheme, SpendsOnce
 {
     public const string TESTNET_NETWORK = 'near:testnet';
     // USDC on NEAR testnet, as in the x402 reference implementation.
@@ -33,7 +33,7 @@ final class NearExact implements Scheme
      *                             `view_access_key` call). Without it payer() is NULL: unproven.
      */
     public function __construct(
-        private readonly ?string $secretKey = null,
+        #[\SensitiveParameter] private readonly ?string $secretKey = null,
         private readonly ?string $senderId = null,
         private readonly ?int $nonce = null,
         private readonly ?\Closure $clock = null,
@@ -253,6 +253,18 @@ final class NearExact implements Scheme
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    /**
+     * What NEAR spends once: the access key's nonce (network, sender, key, nonce).
+     */
+    public function spent(array $payment): ?array
+    {
+        $raw = $payment['payload']['signedDelegateAction'] ?? null;
+        $bytes = is_string($raw) ? base64_decode($raw, true) : false;
+        $near = is_string($bytes) ? self::decodeSignedDelegateAction($bytes) : null;
+
+        return null === $near ? null : [$payment['accepted']['network'] ?? '', $near['sender_id'], bin2hex($near['public_key_bytes']), $near['nonce']];
     }
 
     private static function timeoutBlocks(array $req): int

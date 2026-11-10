@@ -91,7 +91,7 @@ final class PayingMcpClient implements ClientInterface
             [$scheme, $reason] = $this->budget->choose($this->schemes, $req, $this->events, $this->ofac);
             // Checked again and counted in one step: the screening may have yielded, and
             // payments running concurrently on this budget must not all pass the cap.
-            if (null === $reason && !$this->budget->reserve($req)) {
+            if (null === $reason && !$this->budget->reserve($req, $this->schemes)) {
                 $reason = 'not_allowed';
             }
             // Switched on while the screening ran: the reservation is given back and nothing is signed.

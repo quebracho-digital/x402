@@ -23,9 +23,9 @@ namespace Quebracho\X402\Job;
 final class JobJanitor
 {
     /** Seconds without a change before a queued or running job counts as abandoned: longer than any work (40 s). */
-    public const STALE_AFTER = 300;
+    public const int STALE_AFTER = 300;
     /** Seconds a queued job waits for its own request's runner before the cron runs it instead. */
-    public const ORPHAN_AFTER = 30;
+    public const int ORPHAN_AFTER = 30;
 
     public function __construct(private readonly JobStore $jobs)
     {

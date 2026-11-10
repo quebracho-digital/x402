@@ -4,23 +4,25 @@ declare(strict_types=1);
 
 namespace Quebracho\X402;
 
+use Psr\Clock\ClockInterface;
+
 /**
  * The `exact` scheme on EVM chains: an EIP-3009 TransferWithAuthorization.
  */
-final class EvmExact implements Scheme
+final class EvmExact implements Scheme, SpendsOnce, Expires, AddressForm, VetsOffers
 {
     /** Seconds a signature must still be valid for when it is settled, so it does not expire on its way into a block. */
-    public const SLACK = 6;
+    public const int SLACK = 6;
 
     /**
-     * @param ?Signer   $buyer
-     *                         Needed to pay; a seller that only verifies passes none
-     * @param ?\Closure $clock
-     *                         Returns the current Unix time; tests pin it
+     * @param ?Signer                      $buyer
+     *                                            Needed to pay; a seller that only verifies passes none
+     * @param ClockInterface|\Closure|null $clock
+     *                                            Returns the current Unix time; tests pin it
      */
     public function __construct(
         private readonly ?Signer $buyer = null,
-        private readonly ?\Closure $clock = null,
+        private readonly ClockInterface|\Closure|null $clock = null,
     ) {
     }
 
@@ -92,10 +94,58 @@ final class EvmExact implements Scheme
     }
 
     /**
-     * The clock verify() uses; Sale's pre-flight reads the same one.
+     * Network, payer and EIP-3009 nonce: re-signing the same nonce must not buy a second delivery.
+     */
+    public function spent(array $payment): ?array
+    {
+        $auth = $payment['payload']['authorization'] ?? null;
+
+        return is_array($auth) ? [$payment['accepted']['network'] ?? '', strtolower((string) ($auth['from'] ?? '')), strtolower((string) ($auth['nonce'] ?? ''))] : null;
+    }
+
+    public function expiresAt(array $payment): ?int
+    {
+        $until = $payment['payload']['authorization']['validBefore'] ?? null;
+
+        return is_numeric($until) ? (int) $until : null;
+    }
+
+    public function tooShortFor(array $payment, int $seconds): ?string
+    {
+        // verify() passed, so validBefore is a canonical decimal; same clock as verify().
+        return (int) $this->expiresAt($payment) - $this->now() < $seconds + self::SLACK ? 'invalid_exact_evm_payload_authorization_valid_before' : null;
+    }
+
+    public function valid(string $address): bool
+    {
+        return 1 === preg_match('/^0x[0-9a-fA-F]{40}$/', $address);
+    }
+
+    public function spell(string $address): string
+    {
+        return Signer::checksum($address);
+    }
+
+    public function same(string $a, string $b): bool
+    {
+        return 0 === strcasecmp($a, $b);
+    }
+
+    public function signable(array $req, array $token): bool
+    {
+        // Canonical only: Eip712 pads and strips 0x, so "0330…" or "0x000330…"
+        // would sign to the same address that screening was shown in another form.
+        return is_string($req['payTo'] ?? null) && $this->valid($req['payTo'])
+            // Another EIP-712 domain would sign for a token we did not mean.
+            && ($req['extra']['name'] ?? null) === ($token['extra']['name'] ?? false)
+            && ($req['extra']['version'] ?? null) === ($token['extra']['version'] ?? false);
+    }
+
+    /**
+     * The clock verify() uses; tooShortFor() reads the same one.
      */
     public function now(): int
     {
-        return $this->clock ? ($this->clock)() : time();
+        return Clock::now($this->clock);
     }
 }

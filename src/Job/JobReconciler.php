@@ -6,7 +6,7 @@ namespace Quebracho\X402\Job;
 
 use Quebracho\X402\PaymentLedger;
 use Quebracho\X402\Reconciler;
-use Quebracho\X402\Sale;
+use Quebracho\X402\Settlement;
 
 /**
  * The jobs a lost answer left waiting on a payment, from the janitor's cron (or by hand). It never charges nor runs anything; it moves a job on once JobPayments knows how
@@ -28,7 +28,7 @@ final class JobReconciler
      * A `settling` row younger than this belongs to a request that is still running (the settle takes
      * seconds): it is not looked at.
      */
-    public const MIN_AGE = 60;
+    public const int MIN_AGE = 60;
 
     public function __construct(
         private readonly JobStore $jobs,
@@ -134,8 +134,8 @@ final class JobReconciler
             }
             $state['status'] = 'settled';
             $state['handler_ran'] = false;
-            // The TTL the library gives a settled state: until the signature expires, at most Sale::TTL.
-            $this->ledger->put($job->settlementKey, $state, Sale::ttl(['payload' => ['authorization' => ['validBefore' => $ref['validBefore'] ?? null]]], $state));
+            // The TTL the library gives a settled state: until the signature expires, at most Settlement::TTL.
+            $this->ledger->put($job->settlementKey, $state, Settlement::ttlUntil(is_numeric($ref['validBefore'] ?? null) ? (int) $ref['validBefore'] : null, $state));
         } catch (\Throwable) {
             // ponytail: the job is queued all the same; only the buyer's retry keeps answering needs_review.
         }

@@ -11,6 +11,6 @@ namespace Quebracho\X402;
  * (HTTP) or an in-band isError ledger_unavailable (MCP). Nothing was charged, because the handler did not run.
  * Thrown after a settle that succeeded, the middlewares keep the response instead: the money already moved.
  */
-final class LedgerUnavailableException extends \RuntimeException
+final class LedgerUnavailableException extends \RuntimeException implements X402Exception
 {
 }

@@ -316,9 +316,37 @@ stateDiagram-v2
     failed_ours --> [*]
 ```
 
-What stays with your app: the MCP tools themselves and the middleware's hooks
-that tie them to these pieces (`validate` runs `JobWork::check`, `payer`
-refuses a `_result` from anyone but the deposit's payer, `$settle` writes the
-`settling` row before the deposit moves and queues it after), plus a
-concurrency limit. The demo app in the same repository has a complete,
-commented implementation (`app/src/X402/JobDesk.php`).
+The hooks that tie the middleware to these pieces are in the library too:
+
+| Piece | What it is |
+|---|---|
+| `JobDesk` | the four hooks `X402McpMiddleware` calls (`validate`, `payer`, `sensitive`, `settle`), routed by the tool's role, and `afterResponse()` |
+| `JobDeposit` | a `_start`: the work's check before any payment is read, a free slot and the `settling` row before the deposit moves, the job queued after, run once the response went out |
+| `JobDelivery` | a `_result`: only the deposit's payer, only a ready job, `ready > delivering > delivered`; the free re-read; and `_status` |
+| `JobIdOnRefusal` | a PSR-15 middleware, right outside `X402McpMiddleware`: a `_start` refused once its job exists still answers the jobId, to the deposit's payer only |
+| `JobSlots` | how many jobs run at once. `FileJobSlots` is one host (flock); adapt your own lock service in a few lines |
+
+```php
+$jobs = [
+    'report_start' => ['role' => 'start', 'pairedWith' => 'report_result', 'price' => '0.01'],
+    'report_result' => ['role' => 'result', 'pairedWith' => 'report_start', 'price' => '0.05'],
+];
+$prices = new PriceList('eip155:8453', $payTo, '0.01', jobs: $jobs);
+$store = new FileJobStore($dir.'/jobs');
+$desk = JobDesk::for($jobs, $store, new JobRunner($store, [$work]),
+    new FileJobSlots($dir.'/slots', 2), $ledger, $facilitator, $prices(...));
+
+$mcp = Seller::with($schemes, $desk->settle(...), $psr17, $psr17)
+    ->ledger($ledger)
+    ->sensitive($desk->sensitive(...))
+    ->mcp($prices, validate: $desk->validate(...), payer: $desk->payer(...));
+
+// after the response went out (Symfony: kernel.terminate; PHP-FPM: after fastcgi_finish_request()):
+$desk->afterResponse();
+```
+
+What stays with your app: the three MCP tools, each one line over the desk
+(`$desk->deposit->queue()`, `$desk->delivery->deliver()`, `$desk->delivery->status()`),
+the cron that calls `JobJanitor` and `JobReconciler`, and the call to `afterResponse()`.
+`tests/Job/JobFlowTest.php` runs the whole flow with three such tools; the demo app in
+the same organisation wires it into Symfony.

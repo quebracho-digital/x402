@@ -6,12 +6,24 @@ on:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.4']
+    # RedisLedgerTest runs against this one; without it those tests are skipped.
+    services:
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      X402_REDIS_URL: redis://127.0.0.1:6379
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.4'
-          extensions: gmp, sodium
+          php-version: ${{ matrix.php }}
+          extensions: gmp, sodium, redis
           coverage: none
       - run: composer validate --strict
       - run: composer install --no-interaction --no-progress

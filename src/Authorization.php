@@ -10,7 +10,7 @@ namespace Quebracho\X402;
  */
 final class Authorization
 {
-    public const TYPES = [
+    public const array TYPES = [
         'TransferWithAuthorization' => [
             ['name' => 'from', 'type' => 'address'],
             ['name' => 'to', 'type' => 'address'],

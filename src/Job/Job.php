@@ -28,19 +28,19 @@ namespace Quebracho\X402\Job;
  */
 final class Job
 {
-    public const SETTLING = 'settling';
-    public const QUEUED = 'queued';
-    public const RUNNING = 'running';
-    public const READY = 'ready';
-    public const DELIVERING = 'delivering';
-    public const DELIVERED = 'delivered';
-    public const FAILED_OURS = 'failed_ours';
+    public const string SETTLING = 'settling';
+    public const string QUEUED = 'queued';
+    public const string RUNNING = 'running';
+    public const string READY = 'ready';
+    public const string DELIVERING = 'delivering';
+    public const string DELIVERED = 'delivered';
+    public const string FAILED_OURS = 'failed_ours';
 
     /**
      * Seconds a delivered result stays on the job for its payer to read again for free (the answer of a paid call may be lost on the way back): enough
      * for a client whose answer was lost to retry, short enough that buyer-derived text does not linger.
      */
-    public const RESULT_TTL = 300;
+    public const int RESULT_TTL = 300;
 
     /**
      * Seconds a `settling` row keeps the buyer's input while nobody can tell whether its deposit moved. A day,
@@ -48,20 +48,20 @@ final class Job
      * (Quebracho\X402\Reconciler::REVIEW_AFTER): after that the text goes, and a deposit found settled later fails the
      * job as ours (the result is free) instead of running on nothing.
      */
-    public const PARAMS_TTL = 86400;
+    public const int PARAMS_TTL = 86400;
 
     /**
      * Seconds a `ready` result waits for its `_result` payment. The result quotes the buyer's text, so a job
      * that is never bought must not keep it forever: after a day the janitor drops it (JobJanitor::forget), the
      * job answers `expired` and `_result` refuses it without charging. Like every TTL here, it needs the cron.
      */
-    public const READY_TTL = 86400;
+    public const int READY_TTL = 86400;
 
     /**
      * From each state, where it may go. delivered and failed_ours are final. There is no way back to
      * settling and no way out of it but forward: whether the deposit moved is the reconciler's call.
      */
-    public const TRANSITIONS = [
+    public const array TRANSITIONS = [
         self::SETTLING => [self::QUEUED],
         self::QUEUED => [self::RUNNING, self::FAILED_OURS],
         self::RUNNING => [self::READY, self::FAILED_OURS],
@@ -76,7 +76,7 @@ final class Job
      * a buyer's mistake can never be filed as ours (and get a free `_result`) by a typo in a reason.
      * The buyer's own mistakes (a bad text) are refused before the deposit is read, and never get a job.
      */
-    public const FAILURES = [
+    public const array FAILURES = [
         'provider_error', // what the work depends on (a model's host, an API) failed or refused us
         'invalid_reply',  // it answered, but not what we can deliver
         'our_timeout',    // the work outlived its slot (the janitor found it stale)

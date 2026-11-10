@@ -14,7 +14,7 @@ use kornrunner\Keccak;
  */
 final class Eip712
 {
-    private const DOMAIN_FIELDS = [
+    private const array DOMAIN_FIELDS = [
         'name' => 'string',
         'version' => 'string',
         'chainId' => 'uint256',

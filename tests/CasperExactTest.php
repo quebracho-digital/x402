@@ -173,6 +173,9 @@ final class CasperExactTest extends TestCase
         yield 'no token version' => [['extra' => ['name' => 'Cep18x402', 'version' => '']]];
         yield 'zero amount' => [['amount' => '0']];
         yield 'fractional amount' => [['amount' => '1.5']];
+        yield 'package recipient' => [['payTo' => '01'.str_repeat('ab', 32)]];
+        yield 'timeout past the claim' => [['maxTimeoutSeconds' => 541]];
+        yield 'amount above uint256' => [['amount' => '2'.str_repeat('0', 77)]];
         yield 'prefixed asset' => [['asset' => 'hash-9824d60dc3a5c44a20b9fd260a412437933835b52fc683d8ae36e4ec2114843e']];
     }
 
@@ -233,9 +236,10 @@ final class CasperExactTest extends TestCase
     public function testNetworksBuildsACasperOfferInMotes(): void
     {
         $network = Networks::addCasper(CasperExact::TESTNET_NETWORK, self::req()['asset'], 'Cep18x402', '1', label: 'Casper testnet');
-        $req = Networks::requirements($network, '1.5', '00'.str_repeat('ab', 32));
+        $req = Networks::requirementsInToken($network, '1.5', '00'.str_repeat('ab', 32));
 
-        $this->assertSame(self::req(), $req);
+        // Upfront: the facilitator checks signature and window, not the balance.
+        $this->assertSame(array_replace(self::req(), ['extra' => ['name' => 'Cep18x402', 'version' => '1', 'paymentFlow' => 'upfront']]), $req);
         $this->assertSame('Casper testnet', Networks::get($network)['label']);
         $this->assertSame(9, Networks::get($network)['decimals']);
         $this->assertSame('1', Networks::atomic('0.000000001', CasperExact::DECIMALS));
@@ -245,12 +249,67 @@ final class CasperExactTest extends TestCase
     {
         $network = Networks::addCasper(CasperExact::MAINNET_NETWORK, self::req()['asset'], 'Cep18x402', '1');
         try {
-            Networks::requirements($network, '0.0000000001', '00'.str_repeat('ab', 32));
+            Networks::requirementsInToken($network, '0.0000000001', '00'.str_repeat('ab', 32));
             $this->fail('truncated a sub-mote price');
         } catch (\InvalidArgumentException) {
         }
         $this->expectException(\InvalidArgumentException::class);
-        Networks::requirements($network, '1', '0x'.str_repeat('ab', 20));
+        Networks::requirementsInToken($network, '1', '0x'.str_repeat('ab', 20));
+    }
+
+    public function testADollarPriceIsNotChargedInCspr(): void
+    {
+        $network = Networks::addCasper(CasperExact::TESTNET_NETWORK, self::req()['asset'], 'Cep18x402', '1');
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('requirementsInToken');
+        Networks::requirements($network, '0.5', '00'.str_repeat('ab', 32));
+    }
+
+    public function testRequirementsInTokenIsForCasperAndBoundsTheTimeout(): void
+    {
+        $network = Networks::addCasper(CasperExact::TESTNET_NETWORK, self::req()['asset'], 'Cep18x402', '1');
+        $this->assertSame(CasperExact::MAX_TIMEOUT, Networks::requirementsInToken($network, '1', '00'.str_repeat('ab', 32), CasperExact::MAX_TIMEOUT)['maxTimeoutSeconds']);
+        foreach ([[$network, 541], [$network, 0]] as [$net, $timeout]) {
+            try {
+                Networks::requirementsInToken($net, '1', '00'.str_repeat('ab', 32), $timeout);
+                $this->fail("built an offer with timeout $timeout");
+            } catch (\InvalidArgumentException) {
+            }
+        }
+        $this->expectException(\InvalidArgumentException::class);
+        Networks::requirementsInToken('eip155:84532', '1', '0x'.str_repeat('ab', 20));
+    }
+
+    public function testAddCasperRefusesASecondTokenAndBadDecimals(): void
+    {
+        Networks::addCasper(CasperExact::TESTNET_NETWORK, self::req()['asset'], 'Cep18x402', '1');
+        // The same token again is fine; another one under the same network is not.
+        Networks::addCasper(CasperExact::TESTNET_NETWORK, self::req()['asset'], 'Cep18x402', '1');
+        foreach ([[str_repeat('11', 32), 9], [self::req()['asset'], 39], [self::req()['asset'], -1]] as [$hash, $decimals]) {
+            try {
+                Networks::addCasper(CasperExact::TESTNET_NETWORK, $hash, 'Cep18x402', '1', $decimals);
+                $this->fail('accepted a bad token');
+            } catch (\InvalidArgumentException) {
+            }
+        }
+        $this->assertSame(self::req()['asset'], Networks::get(CasperExact::TESTNET_NETWORK)['asset']);
+    }
+
+    public static function unsignableOffers(): iterable
+    {
+        yield 'negative amount' => [['amount' => '-5']];
+        yield 'amount above uint256' => [['amount' => '2'.str_repeat('0', 77)]];
+        yield 'timeout past the claim' => [['maxTimeoutSeconds' => 3600]];
+        yield 'ten-year window' => [['maxTimeoutSeconds' => 315360000]];
+        yield 'no timeout' => [['maxTimeoutSeconds' => 0]];
+        yield 'package recipient' => [['payTo' => '01'.str_repeat('ab', 32)]];
+    }
+
+    #[DataProvider('unsignableOffers')]
+    public function testPayRefusesToSignAnUnsafeOffer(array $change): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        self::scheme()->pay([], array_replace(self::req(), $change));
     }
 
     public static function badCasperNetworks(): iterable

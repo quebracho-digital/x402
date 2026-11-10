@@ -14,7 +14,7 @@ namespace Quebracho\X402;
  */
 final class SellerProof
 {
-    private const TYPES = [
+    private const array TYPES = [
         'SellerRequest' => [
             ['name' => 'purpose', 'type' => 'string'],
             ['name' => 'method', 'type' => 'string'],

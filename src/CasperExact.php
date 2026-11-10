@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Quebracho\X402;
 
+use Psr\Clock\ClockInterface;
+
 /**
  * The `exact` scheme on Casper: a CEP-18 TransferWithAuthorization signed
  * as Casper EIP-712 typed data (casper-ecosystem/casper-eip-712).
@@ -16,28 +18,31 @@ namespace Quebracho\X402;
  * submits the transfer_with_authorization and pays the gas. Experimental.
  * Ed25519 keys only: secp256k1 (02…) keys are rejected as invalid_payload.
  */
-final class CasperExact implements Scheme
+final class CasperExact implements Scheme, SpendsOnce, Expires, AddressForm, ShapesOffers
 {
     public const string MAINNET_NETWORK = 'casper:casper';
     public const string TESTNET_NETWORK = 'casper:casper-test';
     // wCSPR, like CSPR, has 9 decimals: 1 CSPR = 1_000_000_000 motes.
     public const int DECIMALS = 9;
+    // The longest offer timeout: a replay is refused by the claim, which lives Sale::TTL (600 s), and a
+    // payment may outlive its offer by 60 s of clock skew.
+    public const int MAX_TIMEOUT = 540;
 
     private const string DOMAIN_TYPE = 'EIP712Domain(string name,string version,string chain_name,bytes32 contract_package_hash)';
     private const string TRANSFER_TYPE = 'TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)';
     private const string ED25519 = '01';
 
     /**
-     * @param ?string   $secretKey
-     *                             Raw 32-byte Ed25519 seed (or 64-byte secret key) of the buyer
-     * @param ?\Closure $clock
-     *                             Returns the current Unix time; tests pin it
-     * @param ?\Closure $nonce
-     *                             Returns 32 random bytes; tests pin it
+     * @param ?string                      $secretKey
+     *                                                Raw 32-byte Ed25519 seed (or 64-byte secret key) of the buyer
+     * @param ClockInterface|\Closure|null $clock
+     *                                                Returns the current Unix time; tests pin it
+     * @param ?\Closure                    $nonce
+     *                                                Returns 32 random bytes; tests pin it
      */
     public function __construct(
         #[\SensitiveParameter] private readonly ?string $secretKey = null,
-        private readonly ?\Closure $clock = null,
+        private readonly ClockInterface|\Closure|null $clock = null,
         private readonly ?\Closure $nonce = null,
     ) {
     }
@@ -56,7 +61,10 @@ final class CasperExact implements Scheme
             default => throw new \InvalidArgumentException('An Ed25519 secret key is a 32-byte seed or a 64-byte secret key.'),
         };
         if (!self::isPackageHash((string) ($req['asset'] ?? '')) || !self::isAddress((string) ($req['payTo'] ?? ''))) {
-            throw new \InvalidArgumentException('A Casper offer names a 64-hex contract package hash and a 00/01-prefixed payTo.');
+            throw new \InvalidArgumentException('A Casper offer names a 64-hex contract package hash and a 00-prefixed (account) payTo.');
+        }
+        if (!self::fitsUint256((string) ($req['amount'] ?? '')) || !self::validTimeout($req['maxTimeoutSeconds'] ?? null)) {
+            throw new \InvalidArgumentException('A Casper offer needs a positive integer amount below 2^256 and maxTimeoutSeconds between 1 and '.self::MAX_TIMEOUT.'.');
         }
         if (empty($req['extra']['name']) || empty($req['extra']['version'])) {
             throw new \InvalidArgumentException('A Casper offer needs extra.name and extra.version (the token\'s EIP-712 domain).');
@@ -99,7 +107,9 @@ final class CasperExact implements Scheme
             ($accepted['scheme'] ?? null) !== 'exact' => 'invalid_scheme',
             ($accepted['network'] ?? null) !== $req['network'] || !$this->supports((string) $req['network']) => 'invalid_network',
             empty($req['extra']['name']) || empty($req['extra']['version']) || !self::isPackageHash((string) ($req['asset'] ?? '')) => 'invalid_payment_requirements',
-            !preg_match('/^[1-9][0-9]*$/', (string) ($req['amount'] ?? '')) => 'invalid_payment_requirements',
+            !self::fitsUint256((string) ($req['amount'] ?? '')) => 'invalid_payment_requirements',
+            // An account (00) payTo only, and a timeout the claim outlives: see MAX_TIMEOUT.
+            !self::isAddress((string) ($req['payTo'] ?? '')) || !self::validTimeout($req['maxTimeoutSeconds'] ?? null) => 'invalid_payment_requirements',
             (string) ($accepted['asset'] ?? '') !== (string) $req['asset']
               || (string) ($accepted['payTo'] ?? '') !== (string) $req['payTo']
               || (string) ($accepted['amount'] ?? '') !== (string) $req['amount'] => 'invalid_payload',
@@ -125,6 +135,61 @@ final class CasperExact implements Scheme
         $from = $payment['payload']['authorization']['from'] ?? null;
 
         return is_string($from) ? $from : null;
+    }
+
+    /**
+     * Network, payer and nonce: the CEP-18 authorization spends (from, nonce) once, like EIP-3009.
+     */
+    public function spent(array $payment): ?array
+    {
+        $auth = $payment['payload']['authorization'] ?? null;
+
+        return is_array($auth) ? [$payment['accepted']['network'] ?? '', strtolower((string) ($auth['from'] ?? '')), strtolower((string) ($auth['nonce'] ?? ''))] : null;
+    }
+
+    public function expiresAt(array $payment): ?int
+    {
+        $until = $payment['payload']['authorization']['validBefore'] ?? null;
+
+        return is_numeric($until) ? (int) $until : null;
+    }
+
+    public function tooShortFor(array $payment, int $seconds): ?string
+    {
+        // The same six seconds verify() asks for, so it does not expire on its way into a block.
+        return (int) $this->expiresAt($payment) - $this->now() < $seconds + 6 ? 'invalid_exact_casper_payload_authorization_valid_before' : null;
+    }
+
+    /**
+     * A Casper offer is priced in the token (wCSPR is not worth a dollar), lives at most MAX_TIMEOUT seconds
+     * (so a replay stays inside the claim) and is settled upfront: the facilitator verifies signature and
+     * window only, not the balance.
+     */
+    public function offerExtra(string $network, int $timeout, bool $inToken): array
+    {
+        if (!$inToken) {
+            throw new \InvalidArgumentException("The token on $network is not priced in dollars: use Networks::requirementsInToken().");
+        }
+        if (!self::validTimeout($timeout)) {
+            throw new \InvalidArgumentException('A Casper offer lives at most '.self::MAX_TIMEOUT." s, so a replay stays inside the claim: $timeout.");
+        }
+
+        return ['paymentFlow' => 'upfront'];
+    }
+
+    public function valid(string $address): bool
+    {
+        return self::isAddress($address);
+    }
+
+    public function spell(string $address): string
+    {
+        return $address;
+    }
+
+    public function same(string $a, string $b): bool
+    {
+        return $a === $b;
     }
 
     /**
@@ -172,11 +237,22 @@ final class CasperExact implements Scheme
     }
 
     /**
-     * An account (00) or package (01) hash, lowercase: what payTo and from are.
+     * An account hash (00 and 64 lowercase hex): what payTo and from are.
+     *
+     * A package (01) recipient is refused: the reference facilitators send the
+     * recipient as an account hash, so such a transfer cannot be the one signed.
      */
     public static function isAddress(string $s): bool
     {
-        return 1 === preg_match('/^0[01][0-9a-f]{64}$/', $s);
+        return 1 === preg_match('/^00[0-9a-f]{64}$/', $s);
+    }
+
+    /**
+     * Whether an offer's timeout is an int the claim outlives.
+     */
+    public static function validTimeout(mixed $seconds): bool
+    {
+        return is_int($seconds) && $seconds >= 1 && $seconds <= self::MAX_TIMEOUT;
     }
 
     /**
@@ -189,7 +265,7 @@ final class CasperExact implements Scheme
 
     private static function canonical(array $auth, string $signature, string $publicKey): bool
     {
-        $formats = ['from' => '/^00[0-9a-f]{64}$/', 'to' => '/^0[01][0-9a-f]{64}$/', 'nonce' => '/^[0-9a-f]{64}$/', 'value' => '/^(0|[1-9][0-9]{0,77})$/', 'validAfter' => '/^(0|[1-9][0-9]{0,18})$/', 'validBefore' => '/^(0|[1-9][0-9]{0,18})$/'];
+        $formats = ['from' => '/^00[0-9a-f]{64}$/', 'to' => '/^00[0-9a-f]{64}$/', 'nonce' => '/^[0-9a-f]{64}$/', 'value' => '/^(0|[1-9][0-9]{0,77})$/', 'validAfter' => '/^(0|[1-9][0-9]{0,18})$/', 'validBefore' => '/^(0|[1-9][0-9]{0,18})$/'];
         foreach ($formats as $key => $format) {
             if (!is_string($auth[$key] ?? null) || !preg_match($format, $auth[$key])) {
                 return false;
@@ -206,6 +282,18 @@ final class CasperExact implements Scheme
         return 32 === strlen($raw) ? $raw : throw new \InvalidArgumentException('Not 32 bytes.');
     }
 
+    /**
+     * A positive plain decimal that fits uint256, so the digest signs the number the offer states.
+     */
+    private static function fitsUint256(string $decimal): bool
+    {
+        if (1 !== preg_match('/^[1-9][0-9]{0,77}$/', $decimal)) {
+            return false;
+        }
+
+        return gmp_cmp(gmp_init($decimal, 10), gmp_sub(gmp_pow(2, 256), 1)) <= 0;
+    }
+
     private static function uint256(string $decimal): string
     {
         return str_pad(gmp_export(gmp_init($decimal, 10)), 32, "\0", STR_PAD_LEFT);
@@ -213,6 +301,6 @@ final class CasperExact implements Scheme
 
     private function now(): int
     {
-        return $this->clock ? ($this->clock)() : time();
+        return Clock::now($this->clock);
     }
 }

@@ -35,7 +35,9 @@ final class X402McpMiddleware implements MiddlewareInterface
      *                                             fn(string $key): bool — TRUE the first time a payment is seen, FALSE
      *                                             after; atomic and durable (FileClaims, or a DB unique key). Runs before
      *                                             the handler, so a payment buys one delivery even before it settles.
-     * @param \Closure                  $settle
+     * @param \Closure|Facilitator      $settle
+     *                                             A Facilitator (HttpFacilitator, CircleFacilitator, ChainFacilitator, MockFacilitator): it settles,
+     *                                             and it verifies online too unless $verify is given. Or a closure, to wrap the settle:
      *                                             fn(array $payment, array $req): array — a facilitator's settle result.
      *                                             Settlement::mock() is mock mode, never implicit: nothing moves.
      * @param ?EventDispatcherInterface $events
@@ -82,15 +84,18 @@ final class X402McpMiddleware implements MiddlewareInterface
      * @param ?Stop                     $stop
      *                                             While its file exists the seller answers payments_paused (JSON-RPC -32000) before verifying or charging anything. NULL: no stop switch
      */
+    private readonly \Closure $settle;
+    private readonly ?\Closure $verify;
+
     public function __construct(
         private readonly array $schemes,
         private readonly \Closure $price,
         private readonly \Closure $claim,
         private readonly ResponseFactoryInterface $responses,
         private readonly StreamFactoryInterface $streams,
-        private readonly \Closure $settle,
+        \Closure|Facilitator $settle,
         private readonly ?EventDispatcherInterface $events = null,
-        private readonly ?\Closure $verify = null,
+        ?\Closure $verify = null,
         private readonly ?\Closure $release = null,
         private readonly ?\Closure $resource = null,
         private readonly ?\Closure $validate = null,
@@ -102,6 +107,9 @@ final class X402McpMiddleware implements MiddlewareInterface
         private readonly ?OfacSdn $ofac = null,
         private readonly ?Stop $stop = null,
     ) {
+        $this->settle = Settlement::settler($settle);
+        // A facilitator given whole also verifies online, unless the caller passed its own check.
+        $this->verify = $verify ?? ($settle instanceof Facilitator ? Settlement::verifier($settle) : null);
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
@@ -348,7 +356,7 @@ final class X402McpMiddleware implements MiddlewareInterface
     private function replay(mixed $id, array $accepts, array $resource, array $state): ResponseInterface
     {
         $receipt = $state['receipt'];
-        $settled = $this->rewrite(Sale::restore($state['response'], $this->responses, $this->streams), $state['id'] ?? null, fn (array $out): array => $this->receipted(array_replace($out, ['id' => $id]), $receipt));
+        $settled = $this->rewrite(Settlement::restore($state['response'], $this->responses, $this->streams), $state['id'] ?? null, fn (array $out): array => $this->receipted(array_replace($out, ['id' => $id]), $receipt));
 
         return $settled['response'] ?? $this->required($id, $accepts, $resource, 'already_settled');
     }
@@ -359,7 +367,7 @@ final class X402McpMiddleware implements MiddlewareInterface
             return new Sale($this->schemes, $this->claim, $this->settle, $this->events, $this->verify, $this->release, $payment, $req, $payer, $duration, ofac: $this->ofac);
         }
         $ledger = $this->ledger;
-        $ttl = Sale::ttl($payment);
+        $ttl = Settlement::ttl($payment, [], $this->schemes);
 
         return new Sale($this->schemes, fn (string $key): bool => $ledger->claim($key, $ttl), $this->settle, $this->events, $this->verify, fn (string $key) => $ledger->release($key), $payment, $req, $payer, $duration, ofac: $this->ofac);
     }
