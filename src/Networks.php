@@ -20,7 +20,7 @@ final class Networks
     // blacklist of its USDC and USDT is an eth_call, which costs no gas. Paying on
     // it is possible but a settlement there costs real gas. The testnets are for the demo.
     // Any other chain is registered by the site with add() (see "Add a blockchain" in docs/networks.md).
-    public const ALL = [
+    public const array ALL = [
         'eip155:8453' => [
             'label' => 'Base (USDC)',
             // Circle's USDC on Base (developers.circle.com, checked 2026-11-05). The EIP-712 domain was read from
@@ -238,28 +238,46 @@ final class Networks
     }
 
     /**
+     * Fails when a network cannot be sold on: unknown, or verified by none of the schemes. For a deploy check,
+     * so a mistyped network fails there and not on the first paid request.
+     *
+     * @param Scheme[] $schemes the schemes the seller's middleware is given
+     *
+     * @throws \InvalidArgumentException
+     */
+    public static function assertSupported(string $network, array $schemes): void
+    {
+        if (!self::has($network)) {
+            throw new \InvalidArgumentException("\"$network\" is not a known network");
+        }
+        if ([] === array_filter($schemes, static fn (Scheme $s) => $s->supports($network))) {
+            $registered = implode(', ', array_map(static fn (Scheme $s) => $s::class, $schemes)) ?: 'none';
+
+            throw new \InvalidArgumentException("\"$network\" is supported by no registered scheme (registered: $registered).");
+        }
+    }
+
+    /**
      * How long the buyer's signed payment stays valid, in seconds, by default.
      *
      * It must outlive the delivery: settling happens after it.
      */
-    public const TIMEOUT = 60;
+    public const int TIMEOUT = 60;
 
     /**
      * One PaymentRequirements for a price in dollars.
      *
+     * @param iterable<Scheme> $schemes your own schemes, for a chain family the library does not ship
+     *
      * @throws \InvalidArgumentException
-     *                                   Unknown network, or a price the token cannot represent
+     *                                   Unknown network, a payTo that is no address there, or a price the token cannot represent
      */
-    public static function requirements(string $network, string $usd, string $payTo, int $timeout = self::TIMEOUT): array
+    public static function requirements(string $network, string $usd, string $payTo, int $timeout = self::TIMEOUT, iterable $schemes = []): array
     {
         $token = self::get($network);
-        $evm = str_starts_with($network, 'eip155:');
-        $valid = match (true) {
-            $evm => (bool) preg_match('/^0x[0-9a-fA-F]{40}$/', $payTo),
-            str_starts_with($network, 'casper:') => CasperExact::isAddress($payTo),
-            default => self::isSolanaAddress($payTo),
-        };
-        if (!$valid) {
+        // The network's scheme says what an address is there (AddressForm); one that does not say is not checked.
+        $form = Schemes::find($network, $schemes, AddressForm::class);
+        if ('' === $payTo || (null !== $form && !$form->valid($payTo))) {
             throw new \InvalidArgumentException("Not a payTo address on $network: $payTo.");
         }
 
@@ -268,7 +286,7 @@ final class Networks
             'network' => $network,
             'amount' => self::atomic($usd, $token['decimals']),
             'asset' => $token['asset'],
-            'payTo' => $evm ? Signer::checksum($payTo) : $payTo,
+            'payTo' => null === $form ? $payTo : $form->spell($payTo),
             'maxTimeoutSeconds' => $timeout,
             'extra' => $token['extra'],
         ];

@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Quebracho\X402\Job;
 
+use Psr\Clock\ClockInterface;
+use Quebracho\X402\Clock;
+
 /**
  * Runs one queued job: queued > running > ready (or failed_ours). Call it after the `_start` response went
  * out (in Symfony, kernel.terminate; or a queue worker), never before the job row is durable.
@@ -15,12 +18,11 @@ final class JobRunner
 
     /**
      * @param iterable<JobWork> $works every job tool's work
-     * @param ?\Closure(): int  $clock
      */
     public function __construct(
         private readonly JobStore $jobs,
         iterable $works,
-        private readonly ?\Closure $clock = null,
+        private readonly ClockInterface|\Closure|null $clock = null,
     ) {
         foreach ($works as $work) {
             $this->byTool[$work::start()] = $work;
@@ -68,6 +70,6 @@ final class JobRunner
 
     private function now(): int
     {
-        return null === $this->clock ? time() : ($this->clock)();
+        return Clock::now($this->clock);
     }
 }

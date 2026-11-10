@@ -27,7 +27,7 @@ final class PurchaseIntent
     public static function of(Scheme $scheme, array $payment, array $req): self
     {
         return new self(
-            Settlement::key($payment),
+            Settlement::key($payment, [$scheme]),
             ['network' => $req['network'] ?? null, 'from' => $scheme->payer($payment)],
             array_intersect_key($req, array_flip(['network', 'payTo', 'amount', 'asset'])),
         );

@@ -30,7 +30,9 @@ final class X402Middleware implements MiddlewareInterface
      *                                             fn(string $key): bool — TRUE the first time a payment is seen, FALSE
      *                                             after; atomic and durable (FileClaims, or a DB unique key). Runs before
      *                                             the handler, so a payment buys one delivery even before it settles.
-     * @param \Closure                  $settle
+     * @param \Closure|Facilitator      $settle
+     *                                             A Facilitator (HttpFacilitator, CircleFacilitator, ChainFacilitator, MockFacilitator): it settles,
+     *                                             and it verifies online too unless $verify is given. Or a closure, to wrap the settle:
      *                                             fn(array $payment, array $req): array — a facilitator's settle result
      *                                             (success, transaction, network, payer, errorReason). Settlement::mock()
      *                                             is mock mode, never implicit: nothing moves on chain.
@@ -81,15 +83,18 @@ final class X402Middleware implements MiddlewareInterface
      * @param ?Stop                     $stop
      *                                             While its file exists the seller answers payments_paused (503) before verifying or charging anything. NULL: no stop switch
      */
+    private readonly \Closure $settle;
+    private readonly ?\Closure $verify;
+
     public function __construct(
         private readonly array $schemes,
         private readonly \Closure $price,
         private readonly \Closure $claim,
         private readonly ResponseFactoryInterface $responses,
         private readonly StreamFactoryInterface $streams,
-        private readonly \Closure $settle,
+        \Closure|Facilitator $settle,
         private readonly ?EventDispatcherInterface $events = null,
-        private readonly ?\Closure $verify = null,
+        ?\Closure $verify = null,
         private readonly ?\Closure $release = null,
         private readonly ?\Closure $resource = null,
         private readonly ?PaymentLedger $ledger = null,
@@ -98,6 +103,9 @@ final class X402Middleware implements MiddlewareInterface
         private readonly ?OfacSdn $ofac = null,
         private readonly ?Stop $stop = null,
     ) {
+        $this->settle = Settlement::settler($settle);
+        // A facilitator given whole also verifies online, unless the caller passed its own check.
+        $this->verify = $verify ?? ($settle instanceof Facilitator ? Settlement::verifier($settle) : null);
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
@@ -156,7 +164,7 @@ final class X402Middleware implements MiddlewareInterface
             // Before the handler: nothing charged, nothing run.
             return $this->json(503, ['error' => 'ledger_unavailable']);
         }
-        if (Sale::UNAVAILABLE === $reason) {
+        if (Settlement::UNAVAILABLE === $reason) {
             return $this->json(502, ['error' => $reason]);
         }
         if (null !== $reason) {
@@ -242,7 +250,7 @@ final class X402Middleware implements MiddlewareInterface
             return new Sale($this->schemes, $this->claim, $this->settle, $this->events, $this->verify, $this->release, $payment, $req, ofac: $this->ofac);
         }
         $ledger = $this->ledger;
-        $ttl = Sale::ttl($payment);
+        $ttl = Settlement::ttl($payment, [], $this->schemes);
 
         return new Sale($this->schemes, fn (string $key): bool => $ledger->claim($key, $ttl), $this->settle, $this->events, $this->verify, fn (string $key) => $ledger->release($key), $payment, $req, ofac: $this->ofac);
     }
@@ -325,7 +333,7 @@ final class X402Middleware implements MiddlewareInterface
 
     private function replay(array $state): ResponseInterface
     {
-        return Sale::restore($state['response'], $this->responses, $this->streams)
+        return Settlement::restore($state['response'], $this->responses, $this->streams)
           ->withHeader(PaymentHeaders::RESPONSE, PaymentHeaders::encode($state['receipt']));
     }
 
@@ -336,7 +344,7 @@ final class X402Middleware implements MiddlewareInterface
     private function failed(array $accepts, array $resource, array $receipt): ResponseInterface
     {
         $response = match ($receipt['errorReason']) {
-            Sale::UNAVAILABLE => $this->json(502, ['error' => Sale::UNAVAILABLE]),
+            Settlement::UNAVAILABLE => $this->json(502, ['error' => Settlement::UNAVAILABLE]),
             // The ledger refused the transaction's reference, so it was never sent: as a refused intention.
             'reference_unavailable' => $this->json(503, ['error' => 'ledger_unavailable']),
             default => $this->required($accepts, $resource, $receipt['errorReason']),

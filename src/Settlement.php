@@ -4,51 +4,57 @@ declare(strict_types=1);
 
 namespace Quebracho\X402;
 
+use Psr\Http\Message\ResponseFactoryInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\StreamFactoryInterface;
+
 /**
  * What both middlewares do around the handler: claim a payment once, and
  * read a facilitator's answer without trusting its shape.
  */
 final class Settlement
 {
+    public const string UNAVAILABLE = 'facilitator_unavailable';
+    public const string UNEXPECTED_VERIFY = 'unexpected_verify_error';
+    /** How long a claim or a state lives, at most: seconds. */
+    public const int TTL = 600;
+    /** How long a 'settling' or 'pending' state that holds a transaction lives: a day to reconcile it. */
+    public const int REFERENCED_TTL = 86400;
+    /**
+     * How long an open entry (PaymentLedger::open) lives: three days, so a reconciler still sees it after the
+     * 24 h in which it may resolve it, and marks it needs_review.
+     */
+    public const int OPEN_TTL = 259200;
+    /** The largest response body kept in the ledger, in bytes. */
+    public const int MAX_BODY = 1048576;
+
+    /** The prefix of the ledger claim one retry holds while it runs an upfront handler that has not delivered. */
+    public const string RUN = 'run:';
+
     /**
      * Settle failures after which the money may still move: a broadcast not confirmed yet, a facilitator that
      * went silent after it may have sent, an answer that cannot be read. Sale keeps the payment's claim for
      * exactly these (and for any failure that carries a transaction); every other failure moved nothing.
      * Public so a seller that wraps the settle (a job store, say) decides "nothing moved" with the same list.
      */
-    public const MAY_HAVE_MOVED = ['settlement_pending', Sale::UNAVAILABLE, 'unexpected_settle_error', 'invalid_settle_response'];
+    public const array MAY_HAVE_MOVED = ['settlement_pending', self::UNAVAILABLE, 'unexpected_settle_error', 'invalid_settle_response'];
 
     /**
-     * The payment's identity: what the chain spends once, not its signature.
+     * The payment's identity: what the chain spends once, not its signature. The payment's scheme says what
+     * that is (SpendsOnce): EVM and Casper, network + payer + nonce; Solana, network + the signed message;
+     * NEAR, network + sender + key + nonce. A scheme that does not say is identified by its whole payload.
      *
-     * EVM: network + payer + EIP-3009 nonce (re-signing the same nonce must
-     * not buy a second delivery). Solana: network + the signed message. NEAR: network + sender + key +
-     * nonce. Other
-     * families: the whole payload. The branch follows the network, not the
-     * fields present: schemes ignore fields they do not read, so a NEAR
-     * payment carrying an `authorization` would otherwise get a fresh key.
+     * The scheme follows the network, not the fields present: schemes ignore fields they do not read, so a
+     * NEAR payment carrying an `authorization` would otherwise get a fresh key.
+     *
+     * @param iterable<Scheme> $schemes the caller's own schemes, asked before the library's; needed only for
+     *                                  a scheme of your own that implements SpendsOnce
      */
-    public static function key(array $payment): string
+    public static function key(array $payment, iterable $schemes = []): string
     {
-        $network = (string) ($payment['accepted']['network'] ?? '');
-        $family = strstr($network, ':', true);
-        // Casper's CEP-18 authorization spends (from, nonce) once, like EIP-3009.
-        $auth = 'eip155' === $family || 'casper' === $family ? ($payment['payload']['authorization'] ?? null) : null;
-        $wire = 'solana' === $family && is_string($payment['payload']['transaction'] ?? null) ? base64_decode($payment['payload']['transaction'], true) : false;
-        $solana = is_string($wire) ? Solana::parse($wire) : null;
-        $near = 'near' === $family && is_string($payment['payload']['signedDelegateAction'] ?? null) ? base64_decode($payment['payload']['signedDelegateAction'], true) : false;
-        $near = is_string($near) ? NearExact::decodeSignedDelegateAction($near) : null;
-        $id = match (true) {
-            is_array($auth) => [$payment['accepted']['network'] ?? '', strtolower((string) ($auth['from'] ?? '')), strtolower((string) ($auth['nonce'] ?? ''))],
-            // The signed message, not the signatures: the fee payer's slot is
-            // empty now and filled later, and any bytes there are the same payment.
-            null !== $solana => [$payment['accepted']['network'] ?? '', bin2hex($solana['message'])],
-            // What NEAR spends once: the access key's nonce.
-            null !== $near => [$payment['accepted']['network'] ?? '', $near['sender_id'], bin2hex($near['public_key_bytes']), $near['nonce']],
-            default => $payment['payload'] ?? null,
-        };
+        $id = Schemes::find((string) ($payment['accepted']['network'] ?? ''), $schemes, SpendsOnce::class)?->spent($payment);
 
-        return hash('sha256', json_encode($id, JSON_THROW_ON_ERROR));
+        return hash('sha256', json_encode($id ?? ($payment['payload'] ?? null), JSON_THROW_ON_ERROR));
     }
 
     /**
@@ -58,6 +64,29 @@ final class Settlement
     public static function mock(): \Closure
     {
         return fn (array $payment, array $req): array => ['success' => true, 'transaction' => '', 'network' => $req['network'], 'payer' => $payment['payload']['authorization']['from'] ?? null, 'extensions' => ['mock' => true]];
+    }
+
+    /**
+     * The middlewares' $settle as a closure: a Facilitator's settle (ChainFacilitator's takes the reference
+     * closure too, see run()), or the closure as it is.
+     */
+    public static function settler(\Closure|Facilitator $settle): \Closure
+    {
+        return $settle instanceof Facilitator ? $settle->settle(...) : $settle;
+    }
+
+    /**
+     * The middlewares' $verify from a Facilitator: NULL when its /verify says the payment is good, else its
+     * reason (invalid_payment when it gives none). A FacilitatorException goes through: the middlewares answer
+     * facilitator_unavailable.
+     */
+    public static function verifier(Facilitator $facilitator): \Closure
+    {
+        return static function (array $payment, array $req) use ($facilitator): ?string {
+            $out = $facilitator->verify($payment, $req);
+
+            return true === $out['isValid'] ? null : (\is_string($out['invalidReason'] ?? null) && '' !== $out['invalidReason'] ? $out['invalidReason'] : 'invalid_payment');
+        };
     }
 
     /**
@@ -77,7 +106,7 @@ final class Settlement
         } catch (FacilitatorException $e) {
             // Not the buyer's fault: the HTTP transport answers 502. It may have sent the
             // transaction before going silent, so the claim is kept.
-            $receipt = ['success' => false, 'errorReason' => Sale::UNAVAILABLE];
+            $receipt = ['success' => false, 'errorReason' => self::UNAVAILABLE];
             $error = $e;
         } catch (\Throwable $e) {
             $receipt = null;
@@ -130,5 +159,46 @@ final class Settlement
         }
 
         return $out;
+    }
+
+    /**
+     * How long a claim or state lives: until the payment expires (when its scheme can tell: Expires), at most
+     * TTL seconds. A 'settling' or 'pending' state with a transaction lives REFERENCED_TTL: its money may have
+     * moved, and the hash is what a retry (the lookup) or a person reconciles it with.
+     *
+     * @param array<string, mixed> $state
+     * @param iterable<Scheme>     $schemes the seller's own schemes, asked before the library's
+     */
+    public static function ttl(array $payment, array $state = [], iterable $schemes = []): int
+    {
+        return self::ttlUntil(Schemes::find((string) ($payment['accepted']['network'] ?? ''), $schemes, Expires::class)?->expiresAt($payment), $state);
+    }
+
+    /**
+     * ttl() for a payment known only by its expiry (a reconciler's reference): NULL when it has none.
+     *
+     * @param array<string, mixed> $state
+     */
+    public static function ttlUntil(?int $expiresAt, array $state = []): int
+    {
+        $tx = is_array($state['receipt'] ?? null) ? ($state['receipt']['transaction'] ?? null) : null;
+        if (\in_array($state['status'] ?? null, ['settling', 'pending'], true) && is_string($tx) && '' !== $tx) {
+            return self::REFERENCED_TTL;
+        }
+
+        return min(self::TTL, max(1, null === $expiresAt ? self::TTL : $expiresAt - time()));
+    }
+
+    /**
+     * The response a stored state answers with (its receipt is added by the caller).
+     */
+    public static function restore(array $stored, ResponseFactoryInterface $responses, StreamFactoryInterface $streams): ResponseInterface
+    {
+        $response = $responses->createResponse($stored['status']);
+        foreach ($stored['headers'] as $name => $value) {
+            $response = $response->withHeader((string) $name, (string) $value);
+        }
+
+        return $response->withBody($streams->createStream((string) base64_decode($stored['body'], true)));
     }
 }

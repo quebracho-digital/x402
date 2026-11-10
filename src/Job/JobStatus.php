@@ -15,12 +15,12 @@ namespace Quebracho\X402\Job;
  */
 final class JobStatus
 {
-    public const UNKNOWN = 'unknown';
+    public const string UNKNOWN = 'unknown';
     /** Ready, but nobody bought the result within Job::READY_TTL: it was deleted, there is nothing to sell. */
-    public const EXPIRED = 'expired';
+    public const string EXPIRED = 'expired';
 
     /** state => [reason, retryable, retryAfter seconds]. */
-    private const VIEW = [
+    private const array VIEW = [
         Job::SETTLING => ['deposit_settling', true, 10],
         Job::QUEUED => ['queued', true, 5],
         Job::RUNNING => ['running', true, 5],

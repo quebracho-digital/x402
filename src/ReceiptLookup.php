@@ -18,7 +18,7 @@ use Psr\Http\Message\StreamFactoryInterface;
 final class ReceiptLookup
 {
     /** keccak256("AuthorizationUsed(address,bytes32)"): EIP-3009's event, topics authorizer and nonce. */
-    public const AUTHORIZATION_USED = '0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5';
+    public const string AUTHORIZATION_USED = '0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5';
 
     /**
      * @param ?PaymentStatus $facilitator the facilitator a paymentId is asked about (Circle's has a status route); NULL: only the chain

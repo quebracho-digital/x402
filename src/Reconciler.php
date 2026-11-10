@@ -20,18 +20,18 @@ use Psr\Http\Message\StreamFactoryInterface;
 final class Reconciler
 {
     /** authorizationState(address,bytes32), EIP-3009. */
-    private const SELECTOR = '0xe94a0102';
+    private const string SELECTOR = '0xe94a0102';
     /** After validBefore, an unused authorization can no longer move money; 60 s more for clocks and blocks. */
-    public const GRACE = 60;
+    public const int GRACE = 60;
     /** An entry open longer than this is reported needs_review when it is not resolved. */
-    public const REVIEW_AFTER = 86400;
+    public const int REVIEW_AFTER = 86400;
     /**
      * How far back eth_getLogs looks for AuthorizationUsed: 10,000 blocks, the range public nodes and most
      * providers accept in one call. That is about 5.5 h on Base (2 s), 33 h on Ethereum (12 s). The event is
      * mined before validBefore and the cron runs every 5 minutes, so it is inside unless the reconciler did
      * not run for that long; then it is needs_review, found by hand with an explorer.
      */
-    public const LOG_BLOCKS = 10000;
+    public const int LOG_BLOCKS = 10000;
 
     public function __construct(
         private readonly PaymentLedger $ledger,
@@ -176,8 +176,8 @@ final class Reconciler
             $state['handler_ran'] = false;
         }
         $state['status'] = isset($state['response']) ? 'delivered' : 'settled';
-        // The TTL a settled state gets from Sale: until the signature expires, at most Sale::TTL.
-        $this->ledger->put($key, $state, Sale::ttl(['payload' => ['authorization' => ['validBefore' => $ref['validBefore'] ?? null]]], $state));
+        // The TTL a settled state gets from Sale: until the signature expires, at most Settlement::TTL.
+        $this->ledger->put($key, $state, Settlement::ttlUntil(is_numeric($ref['validBefore'] ?? null) ? (int) $ref['validBefore'] : null, $state));
         $this->ledger->close($key);
     }
 

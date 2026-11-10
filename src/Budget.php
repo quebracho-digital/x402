@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Quebracho\X402;
 
+use Psr\Clock\ClockInterface;
 use Psr\EventDispatcher\EventDispatcherInterface;
 
 /**
@@ -37,23 +38,23 @@ final class Budget
     private array $unsettled = [];
 
     /**
-     * @param array<string, string> $caps
-     *                                          Network => maximum atomic units, e.g. ['eip155:84532' => '50000'] for
-     *                                          0.05 USDC. Networks without a cap get nothing.
-     * @param ?\Closure             $used
-     *                                          fn(string $network, string $from, string $nonce): bool — the token's
-     *                                          EIP-3009 authorizationState on chain. NULL never frees anything.
-     * @param ?\Closure             $clock
-     *                                          Returns the current Unix time; tests pin it
-     * @param int                   $maxTimeout
-     *                                          The longest validity this buyer signs (at most MAX_TIMEOUT): no more
-     *                                          than its HTTP client waits for the answer, or it can pay for one it
-     *                                          never reads
+     * @param array<string, string>        $caps
+     *                                                 Network => maximum atomic units, e.g. ['eip155:84532' => '50000'] for
+     *                                                 0.05 USDC. Networks without a cap get nothing.
+     * @param ?\Closure                    $used
+     *                                                 fn(string $network, string $from, string $nonce): bool — the token's
+     *                                                 EIP-3009 authorizationState on chain. NULL never frees anything.
+     * @param ClockInterface|\Closure|null $clock
+     *                                                 Returns the current Unix time; tests pin it
+     * @param int                          $maxTimeout
+     *                                                 The longest validity this buyer signs (at most MAX_TIMEOUT): no more
+     *                                                 than its HTTP client waits for the answer, or it can pay for one it
+     *                                                 never reads
      */
     public function __construct(
         private readonly array $caps,
         private readonly ?\Closure $used = null,
-        private readonly ?\Closure $clock = null,
+        private readonly ClockInterface|\Closure|null $clock = null,
         private readonly array $perPayment = [],
         private readonly int $maxTimeout = self::MAX_TIMEOUT,
     ) {
@@ -84,9 +85,12 @@ final class Budget
 
     /**
      * Whether to sign this offer at all. The seller wrote it, so nothing in
-     * it is trusted: only known tokens, a sane amount and a short validity.
+     * it is trusted: only known tokens, a sane amount and a short validity, and what the network's scheme
+     * says it may sign (VetsOffers; a scheme that does not vet offers buys nothing).
+     *
+     * @param iterable<Scheme> $schemes the buyer's own schemes, asked before the library's
      */
-    public function allows(array $req): bool
+    public function allows(array $req, iterable $schemes = []): bool
     {
         $network = $req['network'] ?? null;
         $cap = is_string($network) ? $this->caps[$network] ?? null : null;
@@ -98,24 +102,14 @@ final class Budget
             return false;
         }
         $token = Networks::find($network);
+        $form = Schemes::find($network, $schemes, AddressForm::class);
         // The cap is in this token's units: any other asset would make it meaningless.
         $asset = (string) ($req['asset'] ?? '');
-        if (null === $token || (str_starts_with($network, 'eip155:') ? 0 !== strcasecmp($asset, $token['asset']) : $asset !== $token['asset'])) {
+        if (null === $token || !(null !== $form ? $form->same($asset, (string) $token['asset']) : $asset === $token['asset'])) {
             return false;
         }
-        if (str_starts_with($network, 'solana:')) {
-            // Base58 only, one spelling; the fee payer signs last and pays fees, never us.
-            $base58 = '/^[1-9A-HJ-NP-Za-km-z]{32,44}$/';
-            if (!preg_match($base58, (string) ($req['payTo'] ?? '')) || !preg_match($base58, (string) ($req['extra']['feePayer'] ?? '')) || gmp_cmp($req['amount'], (string) PHP_INT_MAX) > 0) {
-                return false;
-            }
-        } elseif (
-            // Canonical only: Eip712 pads and strips 0x, so "0330…" or "0x000330…"
-            // would sign to the same address that screening was shown in another form.
-            !is_string($req['payTo'] ?? null) || !preg_match('/^0x[0-9a-fA-F]{40}$/', $req['payTo'])
-            // Another EIP-712 domain would sign for a token we did not mean.
-            || ($req['extra']['name'] ?? null) !== ($token['extra']['name'] ?? false) || ($req['extra']['version'] ?? null) !== ($token['extra']['version'] ?? false)
-        ) {
+        // What only the scheme can read: payTo in its one spelling, the token's own domain, the fee payer.
+        if (true !== Schemes::find($network, $schemes, VetsOffers::class)?->signable($req, $token)) {
             return false;
         }
 
@@ -139,7 +133,7 @@ final class Budget
         $scheme = is_array($req) ? current(array_filter($schemes, fn (Scheme $s) => $s->supports((string) ($req['network'] ?? '')))) : false;
         $reason = match (true) {
             false === $scheme => 'no_scheme',
-            !$this->allows($req) => 'not_allowed',
+            !$this->allows($req, $schemes) => 'not_allowed',
             default => AddressCheck::run($events, AddressCheck::PAY_TO, is_string($req['payTo'] ?? null) ? $req['payTo'] : null, $req, $ofac),
         };
 
@@ -152,9 +146,9 @@ final class Budget
      * suspension), so payments running concurrently on this object cannot
      * all pass the check before any of them counts: the cap holds.
      */
-    public function reserve(array $req): bool
+    public function reserve(array $req, iterable $schemes = []): bool
     {
-        if (!$this->allows($req)) {
+        if (!$this->allows($req, $schemes)) {
             return false;
         }
         $this->spend($req);
@@ -202,7 +196,7 @@ final class Budget
         if (null === $this->used) {
             return;
         }
-        $now = $this->clock ? ($this->clock)() : time();
+        $now = Clock::now($this->clock);
         foreach ($this->unsettled as $i => [$network, $amount, $from, $nonce, $validBefore]) {
             // Still valid, or close enough that the chain's clock may disagree with
             // ours: the seller may settle it yet.

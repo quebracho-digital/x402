@@ -21,23 +21,23 @@ final class Solana
      * Bitcoin's base58 alphabet, which Solana uses.
      */
     // cspell:disable-next-line
-    public const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+    public const string ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
     /**
      * The programs a payment calls: tokens, token accounts, compute, memo.
      */
     // cspell:disable-next-line
-    public const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+    public const string TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
     // cspell:disable-next-line
-    public const ATA_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
-    public const COMPUTE_BUDGET = 'ComputeBudget111111111111111111111111111111';
+    public const string ATA_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+    public const string COMPUTE_BUDGET = 'ComputeBudget111111111111111111111111111111';
     // cspell:disable-next-line
-    public const MEMO = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
+    public const string MEMO = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
 
     /**
      * Compute units asked for: a transfer and a memo use under 15k.
      */
-    public const COMPUTE_UNITS = 40000;
+    public const int COMPUTE_UNITS = 40000;
 
     /**
      * Bytes from base58.

@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Quebracho\X402\Job;
 
+use Quebracho\X402\Expires;
 use Quebracho\X402\PaymentLedger;
 use Quebracho\X402\Reconciler;
-use Quebracho\X402\Sale;
+use Quebracho\X402\Scheme;
+use Quebracho\X402\Schemes;
 use Quebracho\X402\Settlement;
 
 /**
@@ -19,7 +21,7 @@ use Quebracho\X402\Settlement;
  *   the ledger  what the library wrote about the payment (Settlement::key): settled, delivered or handling
  *               means the money moved; claimed, settling or pending means it is in flight, or is the payment
  *               reconciler's (Reconciler) to resolve first. No state at all is the hard case: the
- *               ledger forgets a state when its TTL ends (Sale::ttl), so "nothing" means "released" only while
+ *               ledger forgets a state when its TTL ends (Settlement::ttl), so "nothing" means "released" only while
  *               every state written since the job started waiting would still be alive.
  *   the chain   after that, the token's authorizationState(from, nonce) (EIP-3009, AuthorizationState):
  *               used means it moved; unused once validBefore has passed means it never can. Only from the cron
@@ -43,9 +45,9 @@ use Quebracho\X402\Settlement;
  */
 final class JobPayments
 {
-    public const SETTLED = 'settled';
-    public const RELEASED = 'released';
-    public const UNKNOWN = 'unknown';
+    public const string SETTLED = 'settled';
+    public const string RELEASED = 'released';
+    public const string UNKNOWN = 'unknown';
 
     /** @var ?\Closure(string, string, string): bool */
     private readonly ?\Closure $authorizationUsed;
@@ -68,18 +70,20 @@ final class JobPayments
      * validBefore; the payer is the job's). Never the signature: a job row must not be a payment someone could
      * resubmit.
      *
+     * @param iterable<Scheme> $schemes the seller's own schemes, asked before the library's
+     *
      * @return array{key: string, network: ?string, nonce: ?string, validBefore: ?int}
      */
-    public static function ref(array $payment): array
+    public static function ref(array $payment, iterable $schemes = []): array
     {
         $auth = \is_array($payment['payload']['authorization'] ?? null) ? $payment['payload']['authorization'] : [];
         $network = $payment['accepted']['network'] ?? null;
 
         return [
-            'key' => Settlement::key($payment),
+            'key' => Settlement::key($payment, $schemes),
             'network' => \is_string($network) ? $network : null,
             'nonce' => \is_string($auth['nonce'] ?? null) ? $auth['nonce'] : null,
-            'validBefore' => is_numeric($auth['validBefore'] ?? null) ? (int) $auth['validBefore'] : null,
+            'validBefore' => Schemes::find(\is_string($network) ? $network : '', $schemes, Expires::class)?->expiresAt($payment),
         ];
     }
 
@@ -103,11 +107,11 @@ final class JobPayments
             return self::UNKNOWN;
         }
         $validBefore = $ref['validBefore'] ?? null;
-        // A state lives at least to min(validBefore, written + Sale::TTL) (Sale::ttl; one with a transaction,
+        // A state lives at least to min(validBefore, written + Settlement::TTL) (Settlement::ttl; one with a transaction,
         // a day). Every state about this payment written from $since on is then alive until
-        // min(validBefore, $since + Sale::TTL): inside that, no state means the library released it, a refusal
+        // min(validBefore, $since + Settlement::TTL): inside that, no state means the library released it, a refusal
         // that moved nothing.
-        if (\is_int($validBefore) && $now < min($validBefore, $since + Sale::TTL)) {
+        if (\is_int($validBefore) && $now < min($validBefore, $since + Settlement::TTL)) {
             return self::RELEASED;
         }
         $network = $ref['network'] ?? null;

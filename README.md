@@ -23,24 +23,26 @@ composer require quebracho/x402
 Needs PHP 8.3+, `ext-gmp`, `ext-sodium`, any PSR-7/17 implementation (e.g.
 `nyholm/psr7`) and, for buying, any PSR-18 client.
 
-Upgrading from 0.3: read [UPGRADE.md](UPGRADE.md) (OFAC screening is now on by default).
+Upgrading: read [UPGRADE.md](UPGRADE.md) (from 0.3, OFAC screening is on by default).
 
 ## Sell
 
 ```php
-use Quebracho\X402\{EvmExact, FileClaims, Networks, X402Middleware};
+use Quebracho\X402\{EvmExact, Facilitators, FileLedger, Networks, Seller};
 
-// Price per request: a list of offers, or null when it is free.
-$price = fn ($request) => [Networks::requirements('eip155:84532', '0.01', $payTo)];
-$middleware = new X402Middleware([new EvmExact()], $price, $claim, $psr17, $psr17, $settle);
+$facilitator = Facilitators::from('https://x402.org/facilitator', $psr18, $psr17, $psr17);
+$middleware = Seller::with([new EvmExact()], $facilitator, $psr17, $psr17)
+    ->ledger(new FileLedger('/var/lib/x402/ledger'))
+    // Price per request: a list of offers, or null when it is free.
+    ->http(fn ($request) => [Networks::requirements('eip155:84532', '0.01', $payTo)]);
 ```
 
-Unpaid → `402` with `PAYMENT-REQUIRED`. Paid → verify offline, claim, run the
-handler, settle only on 2xx, answer with `PAYMENT-RESPONSE`. `$claim` makes each
-payment buy one delivery (`(new FileClaims('/var/x402-claims'))(...)` on one
-host, or any atomic `fn(string $key): bool`); `$settle` is a facilitator
-callback, and `Settlement::mock()` is mock mode (real verification, nothing
-moves).
+Unpaid → `402` with `PAYMENT-REQUIRED`. Paid → verify offline, verify with the
+facilitator, claim, run the handler, settle only on 2xx, answer with
+`PAYMENT-RESPONSE`. The ledger makes each payment buy one delivery and replays
+the answer to a retry. `Facilitators::from('mock', …)` is mock mode (real
+verification, nothing moves), never the default. `Seller` only names the
+options: `new X402Middleware(...)` takes the same ones by position.
 
 ```mermaid
 flowchart TD
@@ -68,16 +70,13 @@ facilitators (generic, Circle, your own chain), MCP and job mode.
 ## Buy
 
 ```php
-use Quebracho\X402\{Budget, EvmExact, PayingHttpClient, Signer};
+use Quebracho\X402\{Budget, Buyer, EvmExact, Signer};
 
-$client = new PayingHttpClient(
-    $psr18,   // must not follow redirects
-    [new EvmExact(new Signer($testnetKey))],
-    Budget::usd('eip155:84532', '0.05'),
-);
+$client = Buyer::with([new EvmExact(new Signer($testnetKey))], Budget::usd('eip155:84532', '0.05'))
+    ->http($psr18);   // $psr18 must not follow redirects
 ```
 
-It pays a `402` once and retries. For MCP use `PayingMcpClient`. Budget,
+It pays a `402` once and retries. For MCP use `->mcp($psr18, $psr17)`. Budget,
 allowlist of sellers and timeouts: [docs/buyer.md](docs/buyer.md).
 
 ## Guides
@@ -89,6 +88,7 @@ allowlist of sellers and timeouts: [docs/buyer.md](docs/buyer.md).
 | [docs/networks.md](docs/networks.md) | built-in networks, adding an EVM chain |
 | [docs/screening.md](docs/screening.md) | OFAC (on by default), more lists, listeners |
 | [docs/protections.md](docs/protections.md) | what is checked, layer by layer, and the known limits |
+| [docs/extending.md](docs/extending.md) | the interfaces, building by name (`Seller`, `Buyer`), adding a facilitator or a chain family |
 | [docs/near.md](docs/near.md), [docs/casper.md](docs/casper.md) | the experimental schemes |
 | [UPGRADE.md](UPGRADE.md), [ROADMAP.md](ROADMAP.md) | moving between versions, what comes next |
 
@@ -104,7 +104,10 @@ settling there costs real gas). Any EVM chain whose token has
 ## Schemes
 
 `Scheme` (`supports`, `pay`, `verify`, `payer`) is one chain family; experimental
-until 1.0.
+until 1.0. What else the library needs to know about a chain (the payment's
+identity, its expiry, what an address is, what a buyer may sign) the scheme says
+through optional interfaces, so a new family is added without touching the
+core: [docs/extending.md](docs/extending.md).
 
 - `EvmExact`: the stable one.
 - `SolanaExact` (`solana:*`, devnet USDC built in): offline verification of one
@@ -126,7 +129,10 @@ charge without PSR-15 too.
 ## Tests
 
 ```bash
-vendor/bin/phpunit tests   # no network
+composer check   # phpunit (no network), PHPStan, php-cs-fixer, dependency analyser
 ```
+
+The rules the code follows, and which of them the build enforces:
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 See [NOTICE](NOTICE) for the origin of some classes.

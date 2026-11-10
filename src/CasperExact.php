@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Quebracho\X402;
 
+use Psr\Clock\ClockInterface;
+
 /**
  * The `exact` scheme on Casper: a CEP-18 TransferWithAuthorization signed
  * as Casper EIP-712 typed data (casper-ecosystem/casper-eip-712).
@@ -16,7 +18,7 @@ namespace Quebracho\X402;
  * submits the transfer_with_authorization and pays the gas. Experimental.
  * Ed25519 keys only: secp256k1 (02…) keys are rejected as invalid_payload.
  */
-final class CasperExact implements Scheme
+final class CasperExact implements Scheme, SpendsOnce, Expires, AddressForm
 {
     public const string MAINNET_NETWORK = 'casper:casper';
     public const string TESTNET_NETWORK = 'casper:casper-test';
@@ -28,16 +30,16 @@ final class CasperExact implements Scheme
     private const string ED25519 = '01';
 
     /**
-     * @param ?string   $secretKey
-     *                             Raw 32-byte Ed25519 seed (or 64-byte secret key) of the buyer
-     * @param ?\Closure $clock
-     *                             Returns the current Unix time; tests pin it
-     * @param ?\Closure $nonce
-     *                             Returns 32 random bytes; tests pin it
+     * @param ?string                      $secretKey
+     *                                                Raw 32-byte Ed25519 seed (or 64-byte secret key) of the buyer
+     * @param ClockInterface|\Closure|null $clock
+     *                                                Returns the current Unix time; tests pin it
+     * @param ?\Closure                    $nonce
+     *                                                Returns 32 random bytes; tests pin it
      */
     public function __construct(
         #[\SensitiveParameter] private readonly ?string $secretKey = null,
-        private readonly ?\Closure $clock = null,
+        private readonly ClockInterface|\Closure|null $clock = null,
         private readonly ?\Closure $nonce = null,
     ) {
     }
@@ -128,6 +130,44 @@ final class CasperExact implements Scheme
     }
 
     /**
+     * Network, payer and nonce: the CEP-18 authorization spends (from, nonce) once, like EIP-3009.
+     */
+    public function spent(array $payment): ?array
+    {
+        $auth = $payment['payload']['authorization'] ?? null;
+
+        return is_array($auth) ? [$payment['accepted']['network'] ?? '', strtolower((string) ($auth['from'] ?? '')), strtolower((string) ($auth['nonce'] ?? ''))] : null;
+    }
+
+    public function expiresAt(array $payment): ?int
+    {
+        $until = $payment['payload']['authorization']['validBefore'] ?? null;
+
+        return is_numeric($until) ? (int) $until : null;
+    }
+
+    public function tooShortFor(array $payment, int $seconds): ?string
+    {
+        // The same six seconds verify() asks for, so it does not expire on its way into a block.
+        return (int) $this->expiresAt($payment) - $this->now() < $seconds + 6 ? 'invalid_exact_casper_payload_authorization_valid_before' : null;
+    }
+
+    public function valid(string $address): bool
+    {
+        return self::isAddress($address);
+    }
+
+    public function spell(string $address): string
+    {
+        return $address;
+    }
+
+    public function same(string $a, string $b): bool
+    {
+        return $a === $b;
+    }
+
+    /**
      * The EIP-712 digest the buyer signs, as 0x-prefixed hex.
      *
      * @param array $req
@@ -213,6 +253,6 @@ final class CasperExact implements Scheme
 
     private function now(): int
     {
-        return $this->clock ? ($this->clock)() : time();
+        return Clock::now($this->clock);
     }
 }

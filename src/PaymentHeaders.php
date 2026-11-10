@@ -11,9 +11,9 @@ namespace Quebracho\X402;
  */
 final class PaymentHeaders
 {
-    public const REQUIRED = 'PAYMENT-REQUIRED';
-    public const SIGNATURE = 'PAYMENT-SIGNATURE';
-    public const RESPONSE = 'PAYMENT-RESPONSE';
+    public const string REQUIRED = 'PAYMENT-REQUIRED';
+    public const string SIGNATURE = 'PAYMENT-SIGNATURE';
+    public const string RESPONSE = 'PAYMENT-RESPONSE';
 
     /**
      * Encodes a header value: JSON, then padded base64.

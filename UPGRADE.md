@@ -1,5 +1,44 @@
 # Upgrading
 
+## Next minor (unreleased)
+
+Nothing is removed and no parameter moves (`tests/CompatibilityTest.php`). Two new dependencies, both
+interfaces only: `psr/cache` ^3 (`Screening` caches the sanctions API's answers in any PSR-6 pool) and
+`psr/clock` ^1. What is new:
+
+- **A facilitator goes to the middlewares whole.** `$settle` takes a `Facilitator` as well as a closure:
+  `new X402Middleware($schemes, $price, $claim, $f, $f, $facilitator)`. It then verifies online too, with
+  the facilitator's `/verify`, unless you pass your own `$verify`. If you passed
+  `fn ($p, $r) => $facilitator->settle($p, $r)` and no `$verify`, nothing changes for you until you pass
+  the facilitator itself. `MockFacilitator` is mock mode as a facilitator, and `Facilitators::from()`
+  builds one from a setting ("mock", Circle's URL, any https URL).
+- **`Seller` and `Buyer`** build the middlewares and the paying clients by name instead of by position:
+  `Seller::with($schemes, $facilitator, $f, $f)->ledger($ledger)->events($events)->mcp($prices)`.
+  The constructors stay as they are.
+- **A chain family plugs in through its scheme.** Four optional interfaces say what the core used to work
+  out from the network's prefix: `SpendsOnce` (the payment's key), `Expires` (its expiry: claim lifetime
+  and slow tools), `AddressForm` (what an address is, and how two are compared), `VetsOffers` (what a buyer
+  may sign). The built-in schemes implement them and behave as before; see `docs/extending.md`. Two
+  consequences: `CasperExact` payments can now buy tools that declare a `$duration`, and a `Scheme` of
+  your own that implements `SpendsOnce` must be passed to `Settlement::key($payment, $schemes)` wherever
+  you compute a key yourself.
+- **Job mode's wiring is in the library**: `Job\JobDesk`, `Job\JobDeposit`, `Job\JobDelivery`,
+  `Job\JobIdOnRefusal`, and `Job\JobSlots` with `Job\FileJobSlots`. An application keeps its tools and
+  one call to `afterResponse()`; see `docs/seller.md`, "Job mode".
+- **From the example application to the library**: `PriceList` (fixed prices per tool, checked when
+  built), `SensitiveRules` (which answers the ledger must not keep), `Screening` (your allow and deny
+  lists, and a cached sanctions API), `Networks::assertSupported()` and `LedgerCheck::run()` (deploy
+  checks).
+- **PSR-20 clocks.** Every `$clock` takes a `Psr\Clock\ClockInterface` as well as the closure it took
+  before (`psr/clock` ^1 is a new dependency, interfaces only). `NearExact`'s is a block height and stays
+  a closure.
+- **`Settlement` holds what `Sale` used to lend.** `Sale` is internal; the names an integrator may need are
+  now `Settlement::TTL`, `REFERENCED_TTL`, `OPEN_TTL`, `MAX_BODY`, `RUN`, `UNAVAILABLE`,
+  `UNEXPECTED_VERIFY`, `Settlement::ttl()` and `Settlement::restore()`. The old ones on `Sale` still work.
+- **`X402Exception`** marks every exception class of the library.
+- Every class constant is typed. A class that redeclares one (none can: the classes are final) is unaffected.
+- `HttpFacilitator::pollSettle()` is the one `/status` poll, shared with `CircleFacilitator`.
+
 ## From 0.3 to 0.4
 
 Every public class, method, constant and constructor parameter of 0.3.0 is still there, in the same

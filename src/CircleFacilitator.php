@@ -22,7 +22,7 @@ use Psr\Http\Message\StreamFactoryInterface;
  */
 final class CircleFacilitator implements Facilitator, PaymentStatus
 {
-    public const URL = 'https://api.circle.com/v1/facilitator/x402';
+    public const string URL = 'https://api.circle.com/v1/facilitator/x402';
 
     private readonly HttpFacilitator $http;
 
@@ -57,30 +57,9 @@ final class CircleFacilitator implements Facilitator, PaymentStatus
             // The proof is built before anything is sent: a refusal, so the claim is freed.
             return ['success' => false, 'errorReason' => 'seller_proof_failed', 'transaction' => '', 'network' => $req['network']];
         }
-        $id = $out['extensions']['settlement-status']['paymentId'] ?? null;
-        // The first /status query is immediate; the delay sits between queries only (DECISIONS.md D16).
-        for ($i = 0; true !== ($out['success'] ?? null) && is_string($id) && preg_match('/^[\w-]+$/', $id) && $i < $this->pollAttempts; ++$i) {
-            if ($i > 0) {
-                sleep($this->pollDelaySeconds);
-            }
-            try {
-                $status = $this->status($id, $req['network']);
-            } catch (FacilitatorException) {
-                // Settled or not, Circle knows it by this id.
-                break;
-            }
-            if ('completed' === ($status['status'] ?? null)) {
-                $out = ['success' => true, 'transaction' => $status['transaction'] ?? null, 'network' => $status['network'] ?? $req['network'], 'payer' => $status['payer'] ?? $out['payer'] ?? null];
-            } elseif ('failed' === ($status['status'] ?? null)) {
-                return ['success' => false, 'errorReason' => is_string($status['reason'] ?? null) ? $status['reason'] : 'settlement_failed', 'transaction' => '', 'network' => $req['network']];
-            }
-        }
-        if (true !== ($out['success'] ?? null) && is_string($id)) {
-            // Still pending after polling: its id is what reconciles it.
-            return ['success' => false, 'errorReason' => 'settlement_pending', 'transaction' => is_string($out['transaction'] ?? null) ? $out['transaction'] : '', 'network' => $req['network'], 'paymentId' => $id];
-        }
 
-        return $this->http->checkSettle($out, $payment, $req);
+        // A pending settle is polled at /status: the first query at once, the delay only between queries (D16).
+        return $this->http->pollSettle($out, $payment, $req, $this->pollAttempts, $this->pollDelaySeconds);
     }
 
     /**
