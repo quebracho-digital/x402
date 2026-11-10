@@ -1,10 +1,10 @@
 # Upgrading
 
-## Next minor (unreleased)
+## From 0.4 to 0.5
 
-Nothing is removed and no parameter moves (`tests/CompatibilityTest.php`). Two new dependencies, both
-interfaces only: `psr/cache` ^3 (`Screening` caches the sanctions API's answers in any PSR-6 pool) and
-`psr/clock` ^1. What is new:
+Nothing is removed and no parameter moves (`tests/CompatibilityTest.php`, against 0.3.0 and 0.4.1). Two
+new dependencies, both interfaces only: `psr/cache` ^3 (`Screening` caches the sanctions API's answers in
+any PSR-6 pool) and `psr/clock` ^1. What is new:
 
 - **A facilitator goes to the middlewares whole.** `$settle` takes a `Facilitator` as well as a closure:
   `new X402Middleware($schemes, $price, $claim, $f, $f, $facilitator)`. It then verifies online too, with
@@ -22,6 +22,20 @@ interfaces only: `psr/cache` ^3 (`Screening` caches the sanctions API's answers 
   consequences: `CasperExact` payments can now buy tools that declare a `$duration`, and a `Scheme` of
   your own that implements `SpendsOnce` must be passed to `Settlement::key($payment, $schemes)` wherever
   you compute a key yourself.
+- **Casper is hardened.** `CasperExact` offers are `upfront`: the facilitator's `/verify` checks neither a
+  balance nor a spent nonce, so the default flow let a buyer with no wCSPR run the handler for free.
+  `Networks::requirements()` (a price in dollars) now refuses a Casper network, because wCSPR is not worth
+  a dollar; use `Networks::requirementsInToken()`. `maxTimeoutSeconds` is capped at 540 s, `payTo` must be
+  an account hash (`00…`), and `pay()` refuses an amount that is not a positive integer below 2^256 and a
+  timeout outside 1 to 540 s. Casper is experimental, so these are not a breaking release; see
+  `docs/casper.md`.
+- **A stop switch.** `Quebracho\X402\Stop` pauses every payment while its flag file exists. Give the same
+  instance to the seller's middleware and to the buyer's client (`stop:` / the last constructor argument)
+  and one `engage()` or `touch` stops both. A paused sale answers `payments_paused` (HTTP 503, JSON-RPC
+  -32000 for MCP) before anything is verified, claimed or run, and again before each settle; a paused
+  purchase reserves and signs nothing, and the caller sees the 402 with `PurchaseOutcome` reporting
+  `refused`. A payment the ledger already holds is still delivered. See `docs/protections.md`, "Stop
+  switch".
 - **Job mode's wiring is in the library**: `Job\JobDesk`, `Job\JobDeposit`, `Job\JobDelivery`,
   `Job\JobIdOnRefusal`, and `Job\JobSlots` with `Job\FileJobSlots`. An application keeps its tools and
   one call to `afterResponse()`; see `docs/seller.md`, "Job mode".
