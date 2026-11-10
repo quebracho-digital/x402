@@ -30,12 +30,13 @@ use Quebracho\X402\X402McpMiddleware;
 use Quebracho\X402\X402Middleware;
 
 /**
- * Public API compatibility with the published quebracho/x402 v0.3.0
- * (github quebracho-digital/x402, tag v0.3.0, commit 1a5246000a7ca7b01b5c289a3c3f85c3cf0977ab).
+ * Public API compatibility with the published releases of quebracho/x402:
+ * v0.3.0 (commit 1a5246000a7ca7b01b5c289a3c3f85c3cf0977ab) and v0.4.1
+ * (commit 07ee42a593834746ac70be4c6782ed4cb791cd56).
  *
- * compat/v0.3.0-api.json is the reflection inventory of that tag (see the
- * inventory script in the commit that added it). Rules:
- * - a class, constant, method, property or constructor of 0.3.0 must still exist;
+ * compat/<tag>-api.json is the reflection inventory of each tag, written by
+ * `bin/api-inventory.php` against a checkout of it. Rules:
+ * - a class, constant, method, property or constructor of a release must still exist;
  * - a parameter keeps its position and name; its type may widen, not narrow;
  * - a new required parameter is a break; a new optional one at the end is an addition;
  * - a return type may narrow (covariance), not widen.
@@ -48,7 +49,11 @@ final class CompatibilityTest extends TestCase
         tearDown as private removeClaims;
     }
 
-    private const FIXTURE = __DIR__.'/compat/v0.3.0-api.json';
+    /** @var array<string, string> release tag => its inventory */
+    private const FIXTURES = [
+        '0.3.0' => __DIR__.'/compat/v0.3.0-api.json',
+        '0.4.1' => __DIR__.'/compat/v0.4.1-api.json',
+    ];
 
     private const BUYER_KEY = '0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318';
     private const GAS_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
@@ -64,16 +69,18 @@ final class CompatibilityTest extends TestCase
     }
 
     /** @return array{classes: array<string, array<string, mixed>>} */
-    private static function fixture(): array
+    private static function fixture(string $path): array
     {
-        return json_decode((string) file_get_contents(self::FIXTURE), true, 512, \JSON_THROW_ON_ERROR);
+        return json_decode((string) file_get_contents($path), true, 512, \JSON_THROW_ON_ERROR);
     }
 
     /** @return iterable<string, array{0: string, 1: array<string, mixed>}> */
     public static function apiClasses(): iterable
     {
-        foreach (self::fixture()['classes'] as $fqn => $api) {
-            yield $fqn => [$fqn, $api];
+        foreach (self::FIXTURES as $tag => $path) {
+            foreach (self::fixture($path)['classes'] as $fqn => $api) {
+                yield "$tag $fqn" => [$fqn, $api];
+            }
         }
     }
 
@@ -294,7 +301,7 @@ final class CompatibilityTest extends TestCase
             if (!$rc->hasConstant($name)) {
                 $problems[] = "constante $name eliminada";
             } elseif (Networks::class === $fqn && 'ALL' === $name && \is_array($rc->getConstant($name))) {
-                // Networks::ALL may gain entries (a new chain is an addition); every 0.3.0 entry must stay as it was. Other tables are strict.
+                // Networks::ALL may gain entries (a new chain is an addition); every entry of the release must stay as it was. Other tables are strict.
                 foreach ($c['value'] as $key => $value) {
                     if (($rc->getConstant($name)[$key] ?? null) !== $value) {
                         $problems[] = "constante $name: la entrada $key cambió o desapareció";
