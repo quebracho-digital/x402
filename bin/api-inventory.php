@@ -10,7 +10,6 @@ declare(strict_types=1);
  * Run it against a checkout of the tag, not against the working tree: the fixture must describe
  * what was published, and the test compares today's classes with it.
  */
-
 if ($argc < 4) {
     fwrite(STDERR, "usage: php bin/api-inventory.php <src-dir> <tag> <commit>\n");
     exit(2);
@@ -99,7 +98,7 @@ function declaredClasses(string $src): array
 }
 
 /** @return list<array<string, mixed>> */
-function params(?\ReflectionFunctionAbstract $function): array
+function params(?ReflectionFunctionAbstract $function): array
 {
     if (null === $function) {
         return [];
