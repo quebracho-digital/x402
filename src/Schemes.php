@@ -33,7 +33,7 @@ final class Schemes
             }
         }
         // Without keys: enough to read a payment, never to sign one.
-        self::$builtIn ??= [new EvmExact(), new SolanaExact(), new NearExact(), new CasperExact()];
+        self::$builtIn ??= [new EvmExact(), new SolanaExact(), new NearExact(), new CasperExact(), new NanoExact()];
         foreach (self::$builtIn as $scheme) {
             if ($scheme->supports($network) && (null === $as || $scheme instanceof $as)) {
                 return $scheme;

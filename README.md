@@ -12,7 +12,7 @@ PSR-15 middleware for sellers and a PSR-18 client for buyers. No framework. MIT.
   per-network budget.
 - **Safe by default:** OFAC screening is on, a replayed payment never runs your
   handler, mock mode exists only by name.
-- **Chains:** EVM (EIP-3009), Solana; NEAR and Casper are experimental.
+- **Chains:** EVM (EIP-3009), Solana; NEAR, Casper and Nano are experimental.
 
 ## Install
 
@@ -89,7 +89,7 @@ allowlist of sellers and timeouts: [docs/buyer.md](docs/buyer.md).
 | [docs/screening.md](docs/screening.md) | OFAC (on by default), more lists, listeners |
 | [docs/protections.md](docs/protections.md) | what is checked, layer by layer, and the known limits |
 | [docs/extending.md](docs/extending.md) | the interfaces, building by name (`Seller`, `Buyer`), adding a facilitator or a chain family |
-| [docs/near.md](docs/near.md), [docs/casper.md](docs/casper.md) | the experimental schemes |
+| [docs/near.md](docs/near.md), [docs/casper.md](docs/casper.md), [docs/nano.md](docs/nano.md) | the experimental schemes |
 | [UPGRADE.md](UPGRADE.md), [ROADMAP.md](ROADMAP.md) | moving between versions, what comes next |
 
 ## Networks
@@ -116,6 +116,8 @@ core: [docs/extending.md](docs/extending.md).
 - `NearExact` (`near:testnet`): experimental, see [docs/near.md](docs/near.md).
 - `CasperExact` (`casper:casper`, `casper:casper-test`): experimental, see
   [docs/casper.md](docs/casper.md).
+- `NanoExact` (`nano:mainnet`, after `Networks::addNano()`): experimental, checked on a node of
+  your choice by `NanoFacilitator`, see [docs/nano.md](docs/nano.md).
 
 ## Frameworks without PSR-7
 

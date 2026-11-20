@@ -25,6 +25,7 @@ Developed in github.com/quebracho-digital/x402, which feeds
 - [ ] PHPStan level 8 (29 findings today, the library is at level 6), then typed shapes for requirement, payment and receipt.
 - [ ] `HttpFacilitator::checkSettle` and `Budget::reclaim` still read EIP-3009 fields themselves; route them through the scheme once it can be tested against a live facilitator.
 - [ ] Casper offers in the paying clients: `CasperExact` implements `VetsOffers` (#5).
+- [ ] Nano: `NanoExact` implements `VetsOffers`, so the paying clients cap what a wallet may send; today `$send` is the only gate on the buyer side.
 
 ## Notes
 

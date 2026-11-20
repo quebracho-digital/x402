@@ -198,6 +198,18 @@ final class Networks
     }
 
     /**
+     * Adds Nano (nano:mainnet): XNO, 30 decimals (1 XNO = 10^30 raw), no contract. Not built in, like Casper:
+     * a site that sells in XNO registers it at boot, prices with requirementsInToken() ('0.01' is 0.01 XNO) and
+     * settles with a NanoFacilitator on a node it chooses.
+     */
+    public static function addNano(string $label = 'Nano (XNO)', string $explorer = ''): string
+    {
+        self::$added[NanoExact::NETWORK] = ['label' => $label, 'asset' => NanoExact::ASSET, 'decimals' => NanoExact::DECIMALS, 'extra' => [], 'rpc' => '', 'explorer' => $explorer];
+
+        return NanoExact::NETWORK;
+    }
+
+    /**
      * Adds any EVM chain whose token implements EIP-3009.
      *
      * $name and $version are the token's EIP-712 domain: read them from the
