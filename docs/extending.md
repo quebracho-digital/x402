@@ -9,7 +9,7 @@ store. Everything here is optional; the built-in pieces work without it.
 | --- | --- | --- |
 | to settle somewhere else | `Facilitator` (`verify`, `settle`) | `HttpFacilitator`, `CircleFacilitator`, `ChainFacilitator`, `MockFacilitator` |
 | to ask what became of a settle | `PaymentStatus` | `CircleFacilitator` |
-| another chain family | `Scheme`, plus the optional interfaces below | `EvmExact`, `SolanaExact`, `NearExact`, `CasperExact` |
+| another chain family | `Scheme`, plus the optional interfaces below | `EvmExact`, `SolanaExact`, `NearExact`, `CasperExact`, `ConcordiumExact` |
 | payments remembered elsewhere | `PaymentLedger` | `FileLedger`, `RedisLedger` |
 | jobs stored elsewhere | `Job\JobStore` | `Job\FileJobStore` |
 | another limit on running jobs | `Job\JobSlots` | `Job\FileJobSlots` |
@@ -60,7 +60,7 @@ answers, and asks the scheme for each through an optional interface. It never lo
 | `Expires` | when the payment expires, and whether it can wait for slow work | claims live `Settlement::TTL`; a tool with a `$duration` refuses it (`unsupported_scheme`) |
 | `AddressForm` | whether a `payTo` is an address, its one spelling, and whether two are the same | no check on `payTo`; compared byte for byte |
 | `VetsOffers` | whether a buyer may sign this offer | `Budget` refuses every offer: the scheme cannot buy |
-| `ShapesOffers` | what its offers must carry, or that one must not be made (Casper: priced in the token, settled upfront) | the default offer: a price in dollars, settled after the handler |
+| `ShapesOffers` | what its offers must carry, or that one must not be made (Casper and Concordium: priced in the token, settled upfront) | the default offer: a price in dollars, settled after the handler |
 
 A scheme of your own that implements `SpendsOnce` must be among the schemes given to
 `Settlement::key($payment, $schemes)` wherever you compute a key outside the middlewares (they pass theirs).
