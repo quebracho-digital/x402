@@ -123,6 +123,9 @@ final class Sale
         }
         $key = $this->key();
         $state = $ledger->get($key);
+        if (null !== $state && 'claimed' !== ($state['status'] ?? null) && !$this->samePurchase($state)) {
+            return ['refuse' => 'already_settled'];
+        }
         $answer = null === $state ? null : $this->classify($ledger, $key, $state, $lookup);
         if (!isset($answer['run'])) {
             return $answer;
@@ -135,6 +138,11 @@ final class Sale
         try {
             // Read again under the claim: a retry that finished between our read and our claim already ran it.
             $state = $ledger->get($key);
+            if (null !== $state && 'claimed' !== ($state['status'] ?? null) && !$this->samePurchase($state)) {
+                $this->endRun();
+
+                return ['refuse' => 'already_settled'];
+            }
             $answer = null === $state ? null : $this->classify($ledger, $key, $state, $lookup);
         } catch (\Throwable $e) {
             $this->endRun();
@@ -269,6 +277,7 @@ final class Sale
             $state['response'] = $kept;
             $state['status'] = 'settled' === $state['status'] ? 'delivered' : $state['status'];
         }
+        $state['purchase'] = $this->purchase();
         $key = $this->key();
         $ledger->put($key, $state, Settlement::ttl($this->payment, $state, $this->schemes));
         $this->track($ledger, $key, $state);
@@ -363,6 +372,45 @@ final class Sale
     public function key(): string
     {
         return Settlement::key($this->payment, $this->schemes);
+    }
+
+    /**
+     * What this request buys: the seller's offer, not just the nonce. A state may authorize a delivery or a
+     * handler run only for the purchase it was recorded for; the key stays nonce-based for anti-replay.
+     */
+    public static function purchaseFingerprint(array $req): string
+    {
+        $extra = $req['extra'] ?? null;
+        if (\is_array($extra)) {
+            ksort($extra);
+        }
+
+        return hash('sha256', json_encode([
+            'scheme' => $req['scheme'] ?? null,
+            'network' => $req['network'] ?? null,
+            'asset' => $req['asset'] ?? null,
+            'payTo' => $req['payTo'] ?? null,
+            'amount' => $req['amount'] ?? null,
+            'extra' => $extra,
+        ], JSON_THROW_ON_ERROR));
+    }
+
+    private function purchase(): string
+    {
+        return self::purchaseFingerprint($this->req);
+    }
+
+    /**
+     * A state without a purchase (written before this field existed) is refused, except 'claimed': that one
+     * authorizes no delivery. Fail closed for the short TTL of the others.
+     *
+     * @param array<string, mixed> $state
+     */
+    private function samePurchase(array $state): bool
+    {
+        $stored = $state['purchase'] ?? null;
+
+        return \is_string($stored) && hash_equals($stored, $this->purchase());
     }
 
     private function scheme(): Scheme

@@ -11,8 +11,9 @@ PSR-15 middleware for sellers and a PSR-18 client for buyers. No framework. MIT.
 - **Buy:** `PayingHttpClient` / `PayingMcpClient` pay a `402` once, inside a
   per-network budget.
 - **Safe by default:** OFAC screening is on, a replayed payment never runs your
-  handler, mock mode exists only by name.
-- **Chains:** EVM (EIP-3009), Solana; NEAR and Casper are experimental.
+  handler, a ledger state authorizes only the offer it paid for, and mock mode
+  exists only by name.
+- **Chains:** EVM (EIP-3009), Solana; NEAR, Casper and Concordium are experimental.
 
 ## Install
 
@@ -89,7 +90,7 @@ allowlist of sellers and timeouts: [docs/buyer.md](docs/buyer.md).
 | [docs/screening.md](docs/screening.md) | OFAC (on by default), more lists, listeners |
 | [docs/protections.md](docs/protections.md) | what is checked, layer by layer, and the known limits |
 | [docs/extending.md](docs/extending.md) | the interfaces, building by name (`Seller`, `Buyer`), adding a facilitator or a chain family |
-| [docs/near.md](docs/near.md), [docs/casper.md](docs/casper.md) | the experimental schemes |
+| [docs/near.md](docs/near.md), [docs/casper.md](docs/casper.md), [docs/concordium.md](docs/concordium.md) | the experimental schemes |
 | [UPGRADE.md](UPGRADE.md), [ROADMAP.md](ROADMAP.md) | moving between versions, what comes next |
 
 ## Networks
@@ -99,7 +100,9 @@ Avalanche Fuji, Polygon Amoy, Solana devnet), **Arc mainnet** (`eip155:5042`)
 and **Ethereum mainnet** (there to be *read*: the blacklist check is free;
 settling there costs real gas). Any EVM chain whose token has
 `transferWithAuthorization` is a `Networks::add(...)` away, see
-[docs/networks.md](docs/networks.md).
+[docs/networks.md](docs/networks.md). Concordium's testnet and mainnet are
+built in as `ccd:*`: native CCD, priced in CCD with
+`Networks::requirementsInToken()` (not in dollars).
 
 ## Schemes
 
@@ -116,6 +119,10 @@ core: [docs/extending.md](docs/extending.md).
 - `NearExact` (`near:testnet`): experimental, see [docs/near.md](docs/near.md).
 - `CasperExact` (`casper:casper`, `casper:casper-test`): experimental, see
   [docs/casper.md](docs/casper.md).
+- `ConcordiumExact` (`ccd:*`): experimental; a V1 sponsored CCD transfer signed
+  by the buyer and sponsored by `ConcordiumFacilitator`, which verifies the
+  sender's signature against the account's on-chain keys and waits for
+  finalization. See [docs/concordium.md](docs/concordium.md).
 
 ## Frameworks without PSR-7
 

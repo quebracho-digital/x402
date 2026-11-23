@@ -21,6 +21,7 @@ use Quebracho\X402\Networks;
 use Quebracho\X402\PaymentHeaders;
 use Quebracho\X402\PaymentLedger;
 use Quebracho\X402\Rpc;
+use Quebracho\X402\Sale;
 use Quebracho\X402\Settlement;
 use Quebracho\X402\Signer;
 use Quebracho\X402\X402McpMiddleware;
@@ -642,9 +643,13 @@ final class LedgerReplayTest extends TestCase
     }
 
     /** Writes a state as a crash would leave it, for a payment whose settle outcome was lost. */
-    private function seedSettling(array $payment, array $state): void
+    private function seedSettling(array $payment, array $state, bool $upfront = false): void
     {
-        $this->ledger->put(Settlement::key($payment), ['status' => 'settling'] + $state, 600);
+        $req = Networks::requirements('eip155:84532', '0.01', self::PAY_TO);
+        if ($upfront) {
+            $req['extra']['paymentFlow'] = 'upfront';
+        }
+        $this->ledger->put(Settlement::key($payment), ['status' => 'settling'] + $state + ['purchase' => Sale::purchaseFingerprint($req)], 600);
     }
 
     /** A settle outcome with a reference the facilitator gave, not yet confirmed. */
@@ -695,7 +700,7 @@ final class LedgerReplayTest extends TestCase
     public function testHttpSettlingWithAReferenceConfirmedByTheLookupIsSettledAndAnUpfrontHandlerRunsOnce(): void
     {
         $payment = $this->httpPayment($this->http(upfront: true));
-        $this->seedSettling($payment, self::REFERENCE);
+        $this->seedSettling($payment, self::REFERENCE, true);
 
         $response = $this->http($this->noSecondSettle(), $this->confirmed(), upfront: true)->process($this->httpCall($payment), $this->handler());
         self::assertSame(200, $response->getStatusCode());
@@ -718,7 +723,7 @@ final class LedgerReplayTest extends TestCase
     public function testMcpSettlingWithAReferenceConfirmedByTheLookupRunsTheToolOnceUpfront(): void
     {
         $payment = $this->mcpPayment($this->mcp(upfront: true));
-        $this->seedSettling($payment, self::REFERENCE);
+        $this->seedSettling($payment, self::REFERENCE, true);
 
         $answer = self::answer($this->mcp($this->noSecondSettle(), $this->confirmed(), upfront: true)->process(self::mcpCall(2, $payment), $this->toolHandler()));
         self::assertSame('paid content', $answer['result']['content'][0]['text']);

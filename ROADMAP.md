@@ -16,6 +16,14 @@ Developed in github.com/quebracho-digital/x402, which feeds
 
 ## Open
 
+- [ ] Concordium out of experimental: release `ConcordiumExact` and
+  `ConcordiumFacilitator` (sponsored V1 CCD transfers). Scheme, gRPC-web node,
+  on-chain signature check and a finalized testnet payment are on
+  `feat/concordium` (verified 2026-11-23; native CCD only, no PLT). Audited the
+  same day: the shared ledger binds each outcome to the offer, addresses are
+  canonical, offers are upfront and the facilitator is bound to its node's
+  network. Still needs deployment validation of single-node finalization, the
+  status-hash fallback and the offline-only verify before mainnet.
 - [ ] Send the client one generic rejection code and keep the detail (which list) in the log.
 - [ ] Separate allowlists for the payer and payTo roles.
 - [ ] Verify the EIP-712 domains of USDC on Ethereum Sepolia, Avalanche Fuji and Polygon Amoy.

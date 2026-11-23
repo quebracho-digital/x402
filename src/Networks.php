@@ -110,6 +110,25 @@ final class Networks
             'rpc' => 'https://api.devnet.solana.com',
             'explorer' => 'https://explorer.solana.com/tx/',
         ],
+        // Concordium, in native CCD (the exact scheme also supports PLTs; this library only signs CCD).
+        // The sponsor that pays the fee is per offer (`extra.feePayer`), set by ConcordiumExact when the
+        // seller builds it. Prices are in CCD, never in dollars: use requirementsInToken().
+        'ccd:4221332d34e1694168c2a0c0b3fd0f27' => [
+            'label' => 'Concordium testnet (CCD)',
+            'asset' => 'CCD',
+            'decimals' => ConcordiumExact::DECIMALS,
+            'extra' => [],
+            'rpc' => 'https://grpc.testnet.concordium.com:20000',
+            'explorer' => 'https://ccdexplorer.io/testnet/transaction/',
+        ],
+        'ccd:9dd9ca4d19e9393877d2c44b70f89acb' => [
+            'label' => 'Concordium (CCD)',
+            'asset' => 'CCD',
+            'decimals' => ConcordiumExact::DECIMALS,
+            'extra' => [],
+            'rpc' => 'https://grpc.mainnet.concordium.com:20000',
+            'explorer' => 'https://ccdexplorer.io/mainnet/transaction/',
+        ],
     ];
 
     /**
@@ -284,16 +303,18 @@ final class Networks
     }
 
     /**
-     * One PaymentRequirements for an amount of a Casper token, in the token's own units.
+     * One PaymentRequirements for an amount of a token, in the token's own units.
      *
-     * The wCSPR on Casper is not worth a dollar, so a price in dollars would be
-     * charged in CSPR: `requirements()` refuses it, and a seller prices in the
-     * token here ('1.5' is 1.5 CSPR). The offer is `upfront`: settle before the handler.
+     * Casper's wCSPR and Concordium's CCD are not worth a dollar, so a price in
+     * dollars would be charged as if they were: a seller prices in the token here
+     * ('1.5' is 1.5 wCSPR or CCD). On Casper the offer is `upfront`: settle before
+     * the handler. On Concordium the scheme adds the facilitator as `extra.feePayer`
+     * and the seller must pass its ConcordiumExact built with that account.
      *
      * @param iterable<Scheme> $schemes your own schemes, for a chain family the library does not ship
      *
      * @throws \InvalidArgumentException
-     *                                   Not a Casper network, or an amount the token cannot represent
+     *                                   Not a token-priced network, or an amount the token cannot represent
      */
     public static function requirementsInToken(string $network, string $amount, string $payTo, int $timeout = self::TIMEOUT, iterable $schemes = []): array
     {
@@ -306,10 +327,10 @@ final class Networks
     private static function offer(string $network, string $usd, string $payTo, int $timeout, bool $inToken, iterable $schemes): array
     {
         $token = self::get($network);
-        // A scheme whose offers are its own (Casper: priced in the token, settled upfront) shapes or refuses this one.
+        // A scheme whose offers are its own (Casper, Concordium: priced in the token) shapes or refuses this one.
         $shaper = Schemes::find($network, $schemes, ShapesOffers::class);
         if (null === $shaper && $inToken) {
-            throw new \InvalidArgumentException("requirementsInToken() is for Casper networks, not $network.");
+            throw new \InvalidArgumentException("requirementsInToken() is for token-priced networks (Casper, Concordium), not $network.");
         }
         $extra = $shaper?->offerExtra($network, $timeout, $inToken) ?? [];
         // The network's scheme says what an address is there (AddressForm); one that does not say is not checked.
