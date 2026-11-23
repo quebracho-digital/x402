@@ -187,6 +187,32 @@ final class GrpcConcordiumNodeTest extends TestCase
         $this->node()->status(self::HASH);
     }
 
+    public function testASendAnswerThatIsNotProtobufIsAFacilitatorException(): void
+    {
+        $payment = (new ConcordiumExact(['address' => self::SENDER, 'signKey' => self::SEED], fn () => 42, fn () => 1700000000))->pay([], $this->req());
+        $this->answer('<html>ok</html>');
+
+        // Accepted by the node, unreadable here: Settlement keeps the claim for a FacilitatorException.
+        $this->expectException(FacilitatorException::class);
+        $this->node()->send($payment['payload']['signedTransaction']);
+    }
+
+    public function testAnAccountInfoAnswerThatIsNotProtobufIsAFacilitatorException(): void
+    {
+        $this->answer('<html>ok</html>');
+
+        $this->expectException(FacilitatorException::class);
+        $this->node()->accountInfo(self::SENDER);
+    }
+
+    public function testANonceAnswerThatIsNotProtobufIsAFacilitatorException(): void
+    {
+        $this->answer('<html>ok</html>');
+
+        $this->expectException(FacilitatorException::class);
+        $this->node()->nextNonce(self::SENDER);
+    }
+
     private function req(): array
     {
         return [

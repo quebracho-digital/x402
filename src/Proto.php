@@ -132,6 +132,10 @@ final class Proto
         $end = strlen($bytes);
         while ($i < $end) {
             $byte = \ord($bytes[$i++]);
+            // The tenth byte holds bit 63 only: anything above it does not fit in 64 bits and would be dropped.
+            if (63 === $shift && 0 !== ($byte & 0x7E)) {
+                throw new \InvalidArgumentException('A protobuf varint is wider than 64 bits.');
+            }
             $value |= ($byte & 0x7F) << $shift;
             if (0 === ($byte & 0x80)) {
                 if ($value < 0) {
@@ -152,7 +156,7 @@ final class Proto
     private static function readBytes(string $bytes, int &$i): string
     {
         $length = self::readVarint($bytes, $i);
-        if ($length < 0 || $i + $length > strlen($bytes)) {
+        if ($i + $length > strlen($bytes)) {
             throw new \InvalidArgumentException('Truncated protobuf bytes.');
         }
         $value = substr($bytes, $i, $length);

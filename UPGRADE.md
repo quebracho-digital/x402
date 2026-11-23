@@ -23,7 +23,7 @@ ledger, so they apply to every chain.
 - **The Concordium facilitator names its network.** `ConcordiumFacilitator`
   takes the CAIP-2 network of its node as its fourth argument and refuses a
   different `req.network` with `invalid_network` before calling the node. A
-  mainnet offer no longer settles on a testnet node. Update construction:
+  mainnet offer cannot settle on a testnet node:
   `new ConcordiumFacilitator($node, $sponsor, $seed, ConcordiumExact::TESTNET_NETWORK)`.
 
 ## From 0.5.0 to 0.5.1

@@ -28,7 +28,15 @@ final class GrpcConcordiumNode implements ConcordiumNode
             }
             throw new FacilitatorException($e->getMessage(), $e->status, $e);
         }
-        $info = Proto::parse($answer);
+
+        return self::decode('GetAccountInfo', static fn (): array => self::accountInfoFrom(Proto::parse($answer)));
+    }
+
+    /**
+     * @return array{amount: int, available: int, threshold: int, credentials: array<int, array{threshold: int, keys: array<int, string>}>}
+     */
+    private static function accountInfoFrom(array $info): array
+    {
         $amount = self::uint(Proto::nested($info, 2), 1) ?? 0;
         $threshold = self::uint(Proto::nested($info, 5), 1) ?? 1;
         $credentials = [];
@@ -64,7 +72,8 @@ final class GrpcConcordiumNode implements ConcordiumNode
             throw new FacilitatorException($e->getMessage(), $e->status, $e);
         }
 
-        return self::uint(Proto::nested(Proto::parse($answer), 1), 1) ?? throw new FacilitatorException('The node answered without a sequence number.');
+        return self::decode('GetNextAccountSequenceNumber', static fn (): ?int => self::uint(Proto::nested(Proto::parse($answer), 1), 1))
+            ?? throw new FacilitatorException('The node answered without a sequence number.');
     }
 
     public function send(array $tx): string
@@ -86,7 +95,8 @@ final class GrpcConcordiumNode implements ConcordiumNode
         }
         $transaction = Proto::message(1, $signatures).Proto::message(2, $header).Proto::message(3, $payload);
         $answer = $this->rpc->call('concordium.v2.Queries', 'SendBlockItem', Proto::message(4, $transaction));
-        $hash = Proto::first(Proto::parse($answer), 1);
+        // The node accepted it: an unreadable answer is a FacilitatorException, so the claim stays for reconciliation.
+        $hash = self::decode('SendBlockItem', static fn (): int|string|null => Proto::first(Proto::parse($answer), 1));
         if (!is_string($hash) || 32 !== strlen($hash)) {
             throw new FacilitatorException('The node answered a transaction hash that is not 32 bytes.');
         }
@@ -104,9 +114,9 @@ final class GrpcConcordiumNode implements ConcordiumNode
         } catch (GrpcException $e) {
             throw new FacilitatorException($e->getMessage(), $e->status, $e);
         }
-        try {
-            $status = Proto::parse($answer);
-            $finalized = Proto::nested($status, 3);
+
+        return self::decode('GetBlockItemStatus', static function () use ($answer, $hash): array {
+            $finalized = Proto::nested(Proto::parse($answer), 3);
             if ([] === $finalized) {
                 return ['finalized' => false, 'success' => false, 'amount' => null, 'receiver' => null, 'transaction' => $hash];
             }
@@ -125,10 +135,27 @@ final class GrpcConcordiumNode implements ConcordiumNode
                 'receiver' => is_string($receiver) && 32 === strlen($receiver) ? Concordium::encodeAddress($receiver) : null,
                 'transaction' => is_string($onChain) && 32 === strlen($onChain) ? bin2hex($onChain) : $hash,
             ];
+        });
+    }
+
+    /**
+     * Runs $read over a node's answer. The interface promises FacilitatorException: a truncated or non-protobuf
+     * body must not escape as an unreadable error, above all after a transaction was sent.
+     *
+     * @template T
+     *
+     * @param \Closure(): T $read
+     *
+     * @return T
+     *
+     * @throws FacilitatorException
+     */
+    private static function decode(string $method, \Closure $read): mixed
+    {
+        try {
+            return $read();
         } catch (\InvalidArgumentException $e) {
-            // The interface promises FacilitatorException: a truncated or non-protobuf body must not escape as
-            // an unreadable error after the transaction was sent.
-            throw new FacilitatorException('The node answered an unreadable GetBlockItemStatus: '.$e->getMessage(), 0, $e);
+            throw new FacilitatorException("The node answered an unreadable $method: {$e->getMessage()}", 0, $e);
         }
     }
 
