@@ -13,9 +13,11 @@ use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Quebracho\X402\Authorization;
 use Quebracho\X402\EvmExact;
 use Quebracho\X402\FacilitatorException;
 use Quebracho\X402\FileClaims;
+use Quebracho\X402\FileLedger;
 use Quebracho\X402\Networks;
 use Quebracho\X402\PaymentHeaders;
 use Quebracho\X402\PaymentOutcome;
@@ -242,5 +244,53 @@ final class SaleTest extends TestCase
         $resource = ['url' => 'https://shop.test/product/1', 'description' => 'One wisdom', 'mimeType' => 'text/markdown'];
         $response = $this->middleware(resource: fn () => $resource)->process(new ServerRequest('GET', 'https://shop.test/x?_format=md'), $this->handler());
         $this->assertSame($resource, PaymentHeaders::decode($response->getHeaderLine(PaymentHeaders::REQUIRED))['resource']);
+    }
+
+    public function testAStoredStateDoesNotAuthorizeADifferentOffer(): void
+    {
+        $cheap = $this->req;
+        $cheap['amount'] = '10000';
+        $cheap['extra']['paymentFlow'] = 'upfront';
+        $expensive = $this->req;
+        $expensive['amount'] = '5000000';
+        $expensive['extra']['paymentFlow'] = 'upfront';
+        $f = new Psr17Factory();
+        $ledger = new FileLedger($this->claimsDir());
+        $price = static fn (ServerRequestInterface $request): array => str_ends_with($request->getUri()->getPath(), '/expensive') ? [$expensive] : [$cheap];
+        $handler = new class($this->runs) implements RequestHandlerInterface {
+            /** @var list<string> */
+            public array $paths = [];
+
+            public function __construct(private int &$runs)
+            {
+            }
+
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                ++$this->runs;
+                $this->paths[] = $request->getUri()->getPath();
+
+                return str_ends_with($request->getUri()->getPath(), '/expensive')
+                    ? new Response(200, [], 'expensive')
+                    : new Response(422, [], 'bad input');
+            }
+        };
+        $middleware = new X402Middleware([new EvmExact()], $price, static fn (string $key): bool => true, $f, $f, Settlement::mock(), ledger: $ledger);
+        $signer = new Signer('0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318');
+
+        $requiredA = PaymentHeaders::decode($middleware->process(new ServerRequest('POST', 'https://shop.test/cheap'), $handler)->getHeaderLine(PaymentHeaders::REQUIRED));
+        $paidA = Authorization::pay($signer, $requiredA, $cheap);
+        $nonce = $paidA['payload']['authorization']['nonce'];
+        $cheapResponse = $middleware->process(new ServerRequest('POST', 'https://shop.test/cheap', [PaymentHeaders::SIGNATURE => PaymentHeaders::encode($paidA)]), $handler);
+        $this->assertSame(422, $cheapResponse->getStatusCode());
+        $this->assertSame(['/cheap'], $handler->paths);
+
+        $requiredB = PaymentHeaders::decode($middleware->process(new ServerRequest('POST', 'https://shop.test/expensive'), $handler)->getHeaderLine(PaymentHeaders::REQUIRED));
+        $paidB = Authorization::pay($signer, $requiredB, $expensive, null, $nonce);
+        $expensiveResponse = $middleware->process(new ServerRequest('POST', 'https://shop.test/expensive', [PaymentHeaders::SIGNATURE => PaymentHeaders::encode($paidB)]), $handler);
+        $this->assertSame(409, $expensiveResponse->getStatusCode());
+        $this->assertSame('already_settled', json_decode((string) $expensiveResponse->getBody(), true)['error']);
+        $this->assertSame(['/cheap'], $handler->paths);
+        $this->assertFalse($ledger->get(Settlement::key($paidA))['handler_ran'] ?? true);
     }
 }

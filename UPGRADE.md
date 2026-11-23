@@ -1,5 +1,26 @@
 # Upgrading
 
+## From 0.5.1 to 0.6.0
+
+Concordium is new and experimental. The first two points also touch the shared
+ledger, so they apply to every chain.
+
+- **A ledger state is bound to the offer it paid for.** `Sale` stores a
+  `purchase` fingerprint (network, asset, payTo, amount, extra) in the state and
+  refuses a different offer with `409 already_settled` before `run` or replay.
+  A state written by an older release has no fingerprint and is refused for its
+  short TTL (at most 600 s), except `claimed`, which authorizes no delivery.
+  Deploy after draining, or accept a short 409 window for retries that were
+  already in flight.
+- **Concordium addresses are canonical.** `Concordium::decodeAddress()` refuses
+  a non-canonical base58check spelling (for example a leading `1`). A payment
+  with one is `invalid_payload`; `isAddress()` returns false. There is one
+  spelling per account, for claims and for screening.
+- **Concordium offers are upfront.** `ConcordiumExact::offerExtra()` returns
+  `paymentFlow: upfront`, so the middleware settles before the handler runs,
+  as `docs/concordium.md` already said. Use a `ConcordiumFacilitator` for the
+  online checks; the offer is native CCD only.
+
 ## From 0.5.0 to 0.5.1
 
 Nothing is removed and no parameter moves. Two fixes, and one class:

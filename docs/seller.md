@@ -98,6 +98,12 @@ stateDiagram-v2
   `settled` (charged, no response kept: `409 already_settled`); `delivered`
   (charged, the 2xx response kept: a retry gets it again, not run again, with
   the receipt); `pending` (may have charged, not confirmed: see below).
+- **Bound to the offer.** Every state carries a `purchase` fingerprint of the
+  seller's offer (network, asset, payTo, amount, extra). A payment whose nonce
+  already has a state for a different offer gets `409 already_settled` before
+  `run` or replay; the claim key stays nonce-based. A state written before this
+  field existed is refused for its short TTL, except `claimed`, which
+  authorizes no delivery.
 - **Written before the money or the handler moves (write-ahead).**
   `settling` is stored before a settle is sent. `handling` is stored before an
   upfront handler runs, and it is closed by `delivered`, or by `settled` with

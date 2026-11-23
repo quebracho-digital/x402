@@ -20,6 +20,11 @@ who signed) is "paid"; anything else withholds the output.
   find the nonce spent; here the copy is refused first, so a replay costs the
   seller nothing. With a ledger, a replay of a delivered payment gets its stored
   response back (see Payment ledger), still without running anything.
+- **A ledger state is bound to the offer it paid for.** The state carries a
+  `purchase` fingerprint of the seller's offer (network, asset, payTo, amount
+  and extra). A nonce from a cheap upfront offer cannot authorize a different,
+  more expensive offer: the retry gets `409 already_settled` before the handler
+  runs. The claim key stays nonce-based for anti-replay.
 - **A claim is freed only when nothing can have been charged** (the handler
   delivered nothing, or the facilitator clearly refused). It is kept on
   `settlement_pending`, `facilitator_unavailable`, `unexpected_settle_error`
@@ -38,6 +43,9 @@ who signed) is "paid"; anything else withholds the output.
   (+60 s skew), which bounds replay windows and claim storage.
 - An offer that charges nothing (amount zero or not a plain positive integer)
   is refused. `Networks::requirements` already refuses to build one.
+- Concordium account addresses have one base58check spelling: `decodeAddress()`
+  re-encodes the bytes and refuses a non-canonical input, so `1…` and `11…`
+  variants cannot split a claim or dodge a string-keyed list.
 - Malformed payloads get a rejection reason, never a 5xx.
 
 *What the sponsored gas can do (ChainFacilitator)*
