@@ -25,6 +25,7 @@ final class ConcordiumFacilitator implements Facilitator
     /**
      * @param string                       $sponsor    the sponsor account the facilitator pays fees from (base58)
      * @param string                       $sponsorKey its Ed25519 seed (32 bytes, hex)
+     * @param string                       $network    the CAIP-2 network of $node; verify refuses another
      * @param ClockInterface|\Closure|null $clock      returns the current Unix time; tests pin it
      * @param int                          $pollDelay  seconds between two status queries
      * @param int                          $pollTries  how many status queries at most
@@ -33,10 +34,14 @@ final class ConcordiumFacilitator implements Facilitator
         private readonly ConcordiumNode $node,
         #[\SensitiveParameter] private readonly string $sponsor,
         #[\SensitiveParameter] private readonly string $sponsorKey,
+        private readonly string $network,
         ClockInterface|\Closure|null $clock = null,
         private readonly int $pollDelay = 1,
         private readonly int $pollTries = 30,
     ) {
+        if (!(new ConcordiumExact())->supports($network)) {
+            throw new \InvalidArgumentException("Not a Concordium network: $network.");
+        }
         if (!Concordium::isAddress($sponsor)) {
             throw new \InvalidArgumentException('The sponsor is not a Concordium account address.');
         }
@@ -51,6 +56,9 @@ final class ConcordiumFacilitator implements Facilitator
 
     public function verify(array $payment, array $req): array
     {
+        if (($req['network'] ?? null) !== $this->network) {
+            return ['isValid' => false, 'invalidReason' => 'invalid_network', 'payer' => null];
+        }
         $scheme = new ConcordiumExact(clock: $this->clock);
         $reason = $scheme->verify($payment, $req);
         if (null !== $reason) {

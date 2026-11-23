@@ -20,6 +20,11 @@ ledger, so they apply to every chain.
   `paymentFlow: upfront`, so the middleware settles before the handler runs,
   as `docs/concordium.md` already said. Use a `ConcordiumFacilitator` for the
   online checks; the offer is native CCD only.
+- **The Concordium facilitator names its network.** `ConcordiumFacilitator`
+  takes the CAIP-2 network of its node as its fourth argument and refuses a
+  different `req.network` with `invalid_network` before calling the node. A
+  mainnet offer no longer settles on a testnet node. Update construction:
+  `new ConcordiumFacilitator($node, $sponsor, $seed, ConcordiumExact::TESTNET_NETWORK)`.
 
 ## From 0.5.0 to 0.5.1
 

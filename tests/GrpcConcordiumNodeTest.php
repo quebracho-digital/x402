@@ -179,6 +179,14 @@ final class GrpcConcordiumNodeTest extends TestCase
         ], $this->node()->status(self::HASH));
     }
 
+    public function testAStatusBodyThatIsNotProtobufIsAFacilitatorException(): void
+    {
+        $this->answer('<html>ok</html>');
+
+        $this->expectException(FacilitatorException::class);
+        $this->node()->status(self::HASH);
+    }
+
     private function req(): array
     {
         return [

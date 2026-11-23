@@ -46,6 +46,9 @@ who signed) is "paid"; anything else withholds the output.
 - Concordium account addresses have one base58check spelling: `decodeAddress()`
   re-encodes the bytes and refuses a non-canonical input, so `1…` and `11…`
   variants cannot split a claim or dodge a string-keyed list.
+- The `ConcordiumFacilitator` is bound to the CAIP-2 network of its node and
+  refuses another before any node call: a signed transfer does not carry the
+  network, so a mainnet offer cannot be settled on testnet.
 - Malformed payloads get a rejection reason, never a 5xx.
 
 *What the sponsored gas can do (ChainFacilitator)*

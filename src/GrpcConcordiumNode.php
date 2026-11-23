@@ -104,26 +104,32 @@ final class GrpcConcordiumNode implements ConcordiumNode
         } catch (GrpcException $e) {
             throw new FacilitatorException($e->getMessage(), $e->status, $e);
         }
-        $status = Proto::parse($answer);
-        $finalized = Proto::nested($status, 3);
-        if ([] === $finalized) {
-            return ['finalized' => false, 'success' => false, 'amount' => null, 'receiver' => null, 'transaction' => $hash];
-        }
-        $summary = Proto::nested(Proto::nested($finalized, 1), 2);
-        $effects = Proto::nested(Proto::nested($summary, 4), 3);
-        // A transfer that succeeded has an account_transfer effect; a rejected one has only `none`.
-        $transfer = Proto::nested($effects, 5);
-        $success = [] !== $transfer;
-        $receiver = Proto::first(Proto::nested($transfer, 2), 1);
-        $onChain = Proto::first(Proto::nested($summary, 3), 1);
+        try {
+            $status = Proto::parse($answer);
+            $finalized = Proto::nested($status, 3);
+            if ([] === $finalized) {
+                return ['finalized' => false, 'success' => false, 'amount' => null, 'receiver' => null, 'transaction' => $hash];
+            }
+            $summary = Proto::nested(Proto::nested($finalized, 1), 2);
+            $effects = Proto::nested(Proto::nested($summary, 4), 3);
+            // A transfer that succeeded has an account_transfer effect; a rejected one has only `none`.
+            $transfer = Proto::nested($effects, 5);
+            $success = [] !== $transfer;
+            $receiver = Proto::first(Proto::nested($transfer, 2), 1);
+            $onChain = Proto::first(Proto::nested($summary, 3), 1);
 
-        return [
-            'finalized' => true,
-            'success' => $success,
-            'amount' => $success ? self::uint(Proto::nested($transfer, 1), 1) : null,
-            'receiver' => is_string($receiver) && 32 === strlen($receiver) ? Concordium::encodeAddress($receiver) : null,
-            'transaction' => is_string($onChain) && 32 === strlen($onChain) ? bin2hex($onChain) : $hash,
-        ];
+            return [
+                'finalized' => true,
+                'success' => $success,
+                'amount' => $success ? self::uint(Proto::nested($transfer, 1), 1) : null,
+                'receiver' => is_string($receiver) && 32 === strlen($receiver) ? Concordium::encodeAddress($receiver) : null,
+                'transaction' => is_string($onChain) && 32 === strlen($onChain) ? bin2hex($onChain) : $hash,
+            ];
+        } catch (\InvalidArgumentException $e) {
+            // The interface promises FacilitatorException: a truncated or non-protobuf body must not escape as
+            // an unreadable error after the transaction was sent.
+            throw new FacilitatorException('The node answered an unreadable GetBlockItemStatus: '.$e->getMessage(), 0, $e);
+        }
     }
 
     private function accountInfoRequest(string $address): string

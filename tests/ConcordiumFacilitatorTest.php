@@ -53,7 +53,7 @@ final class ConcordiumFacilitatorTest extends TestCase
 
     private function facilitator(?FakeConcordiumNode $node = null, string $sponsor = self::SPONSOR, string $key = self::SPONSOR_SEED): ConcordiumFacilitator
     {
-        return new ConcordiumFacilitator($node ?? $this->node(), $sponsor, $key, fn () => self::NOW, 0, 1);
+        return new ConcordiumFacilitator($node ?? $this->node(), $sponsor, $key, ConcordiumExact::TESTNET_NETWORK, fn () => self::NOW, 0, 1);
     }
 
     public function testAVerifiedPaymentNamesItsPayer(): void
@@ -187,13 +187,48 @@ final class ConcordiumFacilitatorTest extends TestCase
     public function testTheConstructorRefusesABadSponsorOrKey(): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        new ConcordiumFacilitator($this->node(), 'nope', self::SPONSOR_SEED);
+        new ConcordiumFacilitator($this->node(), 'nope', self::SPONSOR_SEED, ConcordiumExact::TESTNET_NETWORK);
     }
 
     public function testTheConstructorRefusesABadKey(): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        new ConcordiumFacilitator($this->node(), self::SPONSOR, 'nope');
+        new ConcordiumFacilitator($this->node(), self::SPONSOR, 'nope', ConcordiumExact::TESTNET_NETWORK);
+    }
+
+    public function testTheConstructorRefusesANonConcordiumNetwork(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        new ConcordiumFacilitator($this->node(), self::SPONSOR, self::SPONSOR_SEED, 'eip155:84532');
+    }
+
+    public function testAnotherNetworkIsRefusedBeforeTheNode(): void
+    {
+        $req = $this->req();
+        $req['network'] = ConcordiumExact::MAINNET_NETWORK;
+
+        $answer = $this->facilitator()->verify($this->payment(), $req);
+        $this->assertFalse($answer['isValid']);
+        $this->assertSame('invalid_network', $answer['invalidReason']);
+
+        $node = $this->node();
+        $result = $this->facilitator($node)->settle($this->payment(), $req);
+        $this->assertFalse($result['success']);
+        $this->assertSame('invalid_network', $result['errorReason']);
+        $this->assertSame('', $result['transaction']);
+        $this->assertSame([], $node->sent);
+    }
+
+    public function testSettleKeepsTheHashWhenTheStatusCannotBeRead(): void
+    {
+        $node = $this->node();
+        $node->statusError = new FacilitatorException('unreadable GetBlockItemStatus');
+
+        $result = $this->facilitator($node)->settle($this->payment(), $this->req());
+        $this->assertFalse($result['success']);
+        $this->assertSame('settlement_pending', $result['errorReason']);
+        $this->assertSame(self::HASH, $result['transaction']);
+        $this->assertCount(1, $node->sent);
     }
 }
 
@@ -203,6 +238,7 @@ final class FakeConcordiumNode implements ConcordiumNode
     public int $nonce = 42;
     /** @var list<array> */
     public array $sent = [];
+    public ?FacilitatorException $statusError = null;
     public array $status = ['finalized' => false, 'success' => false, 'amount' => null, 'receiver' => null, 'transaction' => ''];
 
     public function __construct(private readonly string $address)
@@ -232,6 +268,10 @@ final class FakeConcordiumNode implements ConcordiumNode
 
     public function status(string $hash): array
     {
+        if (null !== $this->statusError) {
+            throw $this->statusError;
+        }
+
         return $this->status;
     }
 }

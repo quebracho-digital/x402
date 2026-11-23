@@ -98,11 +98,16 @@ from a cheap offer cannot authorize a different one. See
 [docs/seller.md](seller.md), "Payment ledger".
 
 ```php
-use Quebracho\X402\{ConcordiumFacilitator, GrpcConcordiumNode, GrpcWeb};
+use Quebracho\X402\{ConcordiumExact, ConcordiumFacilitator, GrpcConcordiumNode, GrpcWeb};
 
-$facilitator = new ConcordiumFacilitator($node, $sponsorAccount, $sponsorSeedHex);
+$facilitator = new ConcordiumFacilitator($node, $sponsorAccount, $sponsorSeedHex, ConcordiumExact::TESTNET_NETWORK);
 // $middleware = Seller::with([new ConcordiumExact(feePayer: $sponsorAccount)], $facilitator, ...);
 ```
+
+The fourth argument is the CAIP-2 network of the node. `verify()` and
+`settle()` refuse any other network before touching the node, so a mainnet
+offer cannot be settled on a testnet node (a Concordium transfer does not carry
+the network in its signed bytes).
 
 The sponsor is a plain account: the facilitator signs with credential 0, key 0.
 Keep the seed in a secret store, never in the repository.

@@ -134,6 +134,10 @@ final class Proto
             $byte = \ord($bytes[$i++]);
             $value |= ($byte & 0x7F) << $shift;
             if (0 === ($byte & 0x80)) {
+                if ($value < 0) {
+                    throw new \InvalidArgumentException('A protobuf varint is too large for a PHP int.');
+                }
+
                 return $value;
             }
             $shift += 7;
@@ -148,7 +152,7 @@ final class Proto
     private static function readBytes(string $bytes, int &$i): string
     {
         $length = self::readVarint($bytes, $i);
-        if ($i + $length > strlen($bytes)) {
+        if ($length < 0 || $i + $length > strlen($bytes)) {
             throw new \InvalidArgumentException('Truncated protobuf bytes.');
         }
         $value = substr($bytes, $i, $length);
