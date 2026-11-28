@@ -1,6 +1,6 @@
 {
     "source": "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV",
-    "published": "2026-11-13T16:33:06Z",
+    "published": "2026-11-23T17:32:54Z",
     "addresses": {
         "BCH": [
             "qpf2cphc5dkuclkqur7lhj2yuqq9pk3hmukle77vhq",
@@ -218,6 +218,7 @@
             "TVNyvx2astt2AB1Us67ENjfMZeEXZeiuu6",
             "TVgUsVzA7mpFExP4zS7HHbtKti6UuBDuwZ",
             "TVttWTHTCU9kULP51m9BaHpmCW8H1BJJNQ",
+            "TVwLtgUXyDhmcSoQ9x2z9QSua41f8mDFvU",
             "TW5NEaaoPHXC1rt5PaYgG474gQ49oiZ2F5",
             "TW5tokvhEfrb77z98Rc8HqbkzQJ6sxYtGX",
             "TWJmTGhquvdp1jhBmgeGxBBwefteGZUQYW",
